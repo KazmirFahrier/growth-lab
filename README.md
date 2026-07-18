@@ -22,7 +22,7 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 | 2 | Observational causal inference (DiD, RDD, IPW, IV, uplift) | ✅ |
 | 3 | Marketing measurement (MMM, attribution vs. incrementality, LTV, budget) | ✅ |
 | 4 | Forecasting, anomaly detection, risk & calibration | ✅ |
-| 5 | Decision delivery (dashboard + auto-generated growth review) | planned |
+| 5 | Decision delivery (dashboard + provenance-tracked growth review) | ✅ |
 | 6 | Integration with campaign-copilot + audit | planned |
 
 ## Design
@@ -90,6 +90,17 @@ a cost-optimal threshold that must land on the analytic c_fp/(c_fp+c_fn)
 optimum; and a PSI drift monitor verified in both directions — silent on a
 fresh sample of the same population, alarming on a shifted regime.
 
+**Every reported number carries its lineage.** `reporting/` renders a
+weekly growth review (markdown + .pptx via one shared Figure layer) where
+each KPI embeds the exact semantic-layer SQL that produced it and each
+model output names its estimator. The memo template contains no digits; the
+provenance gate extracts every numeric token from the rendered memo and
+fails if any lacks a backing figure. `python -m growth_lab weekly-review`
+produces both files; `streamlit run dashboard/app.py` serves the
+interactive version (KPIs, channel views, MMM response curves with a budget
+slider, forecast + anomaly review, and a live experiment-readout
+calculator).
+
 **The experimentation platform's error rates are themselves under test.**
 `experiments/` provides power analysis, deterministic hash assignment with SRM
 detection, two-proportion and Welch tests, CUPED variance reduction,
@@ -113,6 +124,8 @@ src/growth_lab/
   marketing/              MMM, attribution, LTV, budget optimizer
   forecasting/            Holt-Winters, boosted stumps, backtest, hierarchy
   risk/                   anomaly detection, calibration, drift (PSI)
+  reporting/              Figure provenance, growth review (md + pptx)
+dashboard/                Streamlit app (optional extra: pip install -e ".[dashboard]")
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
 ```
@@ -127,6 +140,8 @@ never reads it.
 ```bash
 pip install -e ".[dev]"
 python -m growth_lab build          # simulate → DuckDB → dbt → metric summary
-pytest                              # calibration gate + invariants
+python -m growth_lab causal-report  # naive vs causal vs truth table
+python -m growth_lab weekly-review  # provenance-tracked memo (md + pptx)
+pytest                              # all gates: calibration, recovery, provenance
 ruff check . && mypy               # style + strict types
 ```

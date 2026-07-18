@@ -19,6 +19,7 @@ SEALED_PACKAGES: dict[str, tuple[str, ...]] = {
     "marketing": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
     "forecasting": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
     "risk": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
+    "reporting": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
 }
 
 

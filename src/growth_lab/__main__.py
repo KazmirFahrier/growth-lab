@@ -101,6 +101,24 @@ def _causal_report() -> None:
         print(f"{scenario:<16} {method:<10} {naive:>+9.4f} {causal:>+9.4f} {truth_val:>+9.4f}")
 
 
+def _weekly_review(db_path: Path, out_dir: Path) -> None:
+    from growth_lab.reporting import build_weekly_review, export_pptx
+
+    if not db_path.exists():
+        raise SystemExit(f"no warehouse at {db_path}; run `python -m growth_lab build` first")
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        review = build_weekly_review(con)
+    finally:
+        con.close()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / "weekly_review.md"
+    md_path.write_text(review.markdown)
+    pptx_path = export_pptx(review, out_dir / "weekly_review.pptx")
+    print(f"wrote {md_path}")
+    print(f"wrote {pptx_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="growth_lab")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -108,10 +126,15 @@ def main() -> None:
     build.add_argument("--db", type=Path, default=Path("data/growth_lab.duckdb"))
     build.add_argument("--seed", type=int, default=None)
     sub.add_parser("causal-report", help="naive vs causal vs truth recovery table")
+    review = sub.add_parser("weekly-review", help="provenance-tracked growth review (md + pptx)")
+    review.add_argument("--db", type=Path, default=Path("data/growth_lab.duckdb"))
+    review.add_argument("--out", type=Path, default=Path("reports"))
     args = parser.parse_args()
 
     if args.command == "build":
         _build(args.db, args.seed)
+    elif args.command == "weekly-review":
+        _weekly_review(args.db, args.out)
     else:
         _causal_report()
 
