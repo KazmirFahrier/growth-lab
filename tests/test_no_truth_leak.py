@@ -10,7 +10,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "growth_lab"
 FORBIDDEN = ("load_truth", "truth.yaml", "simulator.params", "users_latent", "sim_hidden")
-SEALED_PACKAGES = ("warehouse",)  # grows as estimator packages land in later phases
+SEALED_PACKAGES = ("warehouse", "experiments")  # grows as estimator packages land
 
 
 def test_sealed_packages_never_touch_truth() -> None:
