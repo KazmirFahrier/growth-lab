@@ -344,3 +344,90 @@ def journey_paths(seed: int = 5, n_users: int = 20_000) -> JourneyScenario:
         channels=channels,
         true_incremental=true_incremental,
     )
+
+
+# --- forecasting: hierarchical daily revenue with injected anomalies --------
+
+@dataclass(frozen=True)
+class DailySeriesScenario:
+    channels: tuple[str, ...]
+    series: FloatArray  # (n_days, n_channels), day 0 is a Monday
+    total: FloatArray
+    anomaly_days: npt.NDArray[np.int64]  # injected shock days (in channel 0)
+    noise_sd: float
+
+
+def daily_series(seed: int = 6, n_days: int = 600, n_anomalies: int = 12) -> DailySeriesScenario:
+    """Per-channel daily revenue: level + trend + weekly pattern + AR(1)
+    noise, plus a handful of large injected shocks (outages/incidents) in the
+    search channel on known days — the ground truth for anomaly detection.
+    """
+    rng = np.random.default_rng(seed)
+    channels = ("search", "social", "display", "video")
+    levels = np.array([5000.0, 3000.0, 2000.0, 1000.0])
+    trends = np.array([2.0, 1.0, -0.5, 0.5])
+    weekly_amp = np.array([600.0, 400.0, 250.0, 150.0])
+    noise_sd = 150.0
+
+    days = np.arange(n_days)
+    dow = days % 7  # day 0 is a Monday
+    weekly_shape = np.array([0.0, 0.2, 0.5, 0.6, 1.0, -0.7, -1.0])
+
+    series = np.empty((n_days, len(channels)))
+    for c in range(len(channels)):
+        ar = np.empty(n_days)
+        level = 0.0
+        for t in range(n_days):
+            level = 0.6 * level + rng.normal(0, noise_sd)
+            ar[t] = level
+        series[:, c] = levels[c] + trends[c] * days + weekly_amp[c] * weekly_shape[dow] + ar
+
+    anomaly_days = np.sort(
+        rng.choice(np.arange(30, n_days - 1), size=n_anomalies, replace=False)
+    ).astype(np.int64)
+    signs = np.where(rng.random(n_anomalies) < 0.5, -1.0, 1.0)
+    # scale shocks to the TOTAL series' stationary noise (4 independent
+    # AR(1) channels), so "6-9 sigma" means what it says for the detector
+    stationary_sd = noise_sd / math.sqrt(1.0 - 0.6**2)
+    total_sd = 2.0 * stationary_sd
+    series[anomaly_days, 0] += signs * rng.uniform(6.0, 9.0, size=n_anomalies) * total_sd
+
+    return DailySeriesScenario(
+        channels=channels,
+        series=series,
+        total=series.sum(axis=1),
+        anomaly_days=anomaly_days,
+        noise_sd=noise_sd,
+    )
+
+
+# --- risk: transaction fraud with a learnable signal ------------------------
+
+@dataclass(frozen=True)
+class FraudScenario:
+    feature_names: tuple[str, ...]
+    features: FloatArray  # (n, 4)
+    is_fraud: BoolArray
+    true_probability: FloatArray
+
+
+def fraud_transactions(seed: int = 7, n: int = 30_000, shifted: bool = False) -> FraudScenario:
+    """Card-not-present style fraud: risk rises with amount, velocity,
+    geo mismatch, and night-time activity. The `shifted` variant moves the
+    velocity distribution (a new fraud ring) — production drift that a PSI
+    monitor must catch.
+    """
+    rng = np.random.default_rng(seed)
+    amount_z = rng.normal(0.0, 1.0, size=n)
+    velocity = rng.normal(1.0 if shifted else 0.0, 1.0, size=n)
+    country_mismatch = (rng.random(n) < 0.08).astype(np.float64)
+    night = (rng.random(n) < 0.25).astype(np.float64)
+
+    logit = -4.2 + 0.5 * amount_z + 0.8 * velocity + 1.2 * country_mismatch + 0.6 * night
+    prob = 1.0 / (1.0 + np.exp(-logit))
+    return FraudScenario(
+        feature_names=("amount_z", "velocity", "country_mismatch", "night"),
+        features=np.column_stack([amount_z, velocity, country_mismatch, night]),
+        is_fraud=rng.random(n) < prob,
+        true_probability=prob,
+    )

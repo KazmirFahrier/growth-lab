@@ -21,7 +21,7 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 | 1 | Experimentation platform (power, SRM, sequential, CUPED) | ✅ |
 | 2 | Observational causal inference (DiD, RDD, IPW, IV, uplift) | ✅ |
 | 3 | Marketing measurement (MMM, attribution vs. incrementality, LTV, budget) | ✅ |
-| 4 | Forecasting, anomaly detection, risk & calibration | planned |
+| 4 | Forecasting, anomaly detection, risk & calibration | ✅ |
 | 5 | Decision delivery (dashboard + auto-generated growth review) | planned |
 | 6 | Integration with campaign-copilot + audit | planned |
 
@@ -73,6 +73,23 @@ and — the honest headline — proves that *no* attribution model measures
 incrementality: all three over-credit the retargeting channel that harvests
 users already about to convert, with last-touch off by more than 3x.
 
+**Forecasts must beat "same day last week" or fail CI.** `forecasting/`
+implements Holt-Winters and a from-scratch gradient-boosted-stumps
+forecaster behind a rolling-origin backtest harness that owns the train/test
+boundary (a spy-model test proves nothing ever sees past its fold's origin).
+MASE is computed against seasonal-naive on identical folds; MASE >= 1 fails
+the build — models must earn their complexity. Quantile paths (P10/P50/P90)
+are scored with pinball loss, and bottom-up hierarchical forecasts are
+coherence-checked.
+
+**Risk models are deployment-gated on calibration, not just AUC.** `risk/`
+has a robust MAD-residual anomaly detector and a from-scratch isolation
+forest, both scored against injected shocks (precision and recall >= 0.8);
+a fraud model gated on ECE < 0.02 with reliability curves and Brier score;
+a cost-optimal threshold that must land on the analytic c_fp/(c_fp+c_fn)
+optimum; and a PSI drift monitor verified in both directions — silent on a
+fresh sample of the same population, alarming on a shifted regime.
+
 **The experimentation platform's error rates are themselves under test.**
 `experiments/` provides power analysis, deterministic hash assignment with SRM
 detection, two-proportion and Welch tests, CUPED variance reduction,
@@ -94,6 +111,8 @@ src/growth_lab/
   experiments/            power, assignment/SRM, CUPED, sequential, readouts
   causal/                 DiD, RDD, IPW, 2SLS, uplift — with assumption gates
   marketing/              MMM, attribution, LTV, budget optimizer
+  forecasting/            Holt-Winters, boosted stumps, backtest, hierarchy
+  risk/                   anomaly detection, calibration, drift (PSI)
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
 ```
