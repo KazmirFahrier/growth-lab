@@ -19,7 +19,7 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 |---|---|---|
 | 0 | Simulator + DuckDB/dbt warehouse + semantic layer | ✅ |
 | 1 | Experimentation platform (power, SRM, sequential, CUPED) | ✅ |
-| 2 | Observational causal inference (DiD, RDD, PSM/IPW, IV, uplift) | planned |
+| 2 | Observational causal inference (DiD, RDD, IPW, IV, uplift) | ✅ |
 | 3 | Marketing measurement (Bayesian MMM, attribution vs. incrementality, LTV) | planned |
 | 4 | Forecasting, anomaly detection, risk & calibration | planned |
 | 5 | Decision delivery (dashboard + auto-generated growth review) | planned |
@@ -42,6 +42,26 @@ is wrong, everything downstream is meaningless — so it crashes, loudly.
 (`warehouse/semantic.py`) stores aggregate SQL expressions only; averaging
 daily ratios is unrepresentable. Unknown metrics raise, they don't default.
 
+**Causal estimators must refuse broken data.** `causal/` implements DiD,
+sharp RDD, IPW, 2SLS, and a T-learner from first principles (the only deps
+are numpy and pandas), each behind a mandatory diagnostic: parallel-trends
+placebo, density continuity at the cutoff, overlap and post-weighting
+balance, first-stage F. When an assumption fails, the estimator raises
+`AssumptionViolation` instead of returning a number. The recovery gate in
+`tests/test_causal_recovery.py` requires all three legs per scenario: the
+naive answer is provably biased, the causal answer lands on the sealed
+truth, and the assumption-violating variant is refused. See it yourself:
+
+```
+$ python -m growth_lab causal-report
+scenario         method         naive    causal     truth
+---------------------------------------------------------
+geo rollout      DiD          +0.0256   +0.0081   +0.0080
+spend threshold  sharp RDD    +0.6856   +0.1689   +0.1500
+promo email      IPW          +0.1894   +0.0440   +0.0600
+price change     2SLS         +1.3184   -0.4022   -0.4000
+```
+
 **The experimentation platform's error rates are themselves under test.**
 `experiments/` provides power analysis, deterministic hash assignment with SRM
 detection, two-proportion and Welch tests, CUPED variance reduction,
@@ -61,6 +81,7 @@ src/growth_lab/
   simulator/              params loader + vectorized event generation
   warehouse/              DuckDB landing, dbt orchestration, semantic layer
   experiments/            power, assignment/SRM, CUPED, sequential, readouts
+  causal/                 DiD, RDD, IPW, 2SLS, uplift — with assumption gates
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
 ```
