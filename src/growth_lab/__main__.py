@@ -119,6 +119,37 @@ def _weekly_review(db_path: Path, out_dir: Path) -> None:
     print(f"wrote {pptx_path}")
 
 
+def _export_mmm(out_path: Path) -> None:
+    """Fit the MMM on the media-market scenario and write a truth-free
+    parameter artifact for the agent bridge's budget planner."""
+    import json
+
+    import numpy as np
+
+    from growth_lab.marketing import fit_mmm
+    from growth_lab.simulator.scenarios import mmm_market
+
+    scenario = mmm_market()
+    fit = fit_mmm(scenario.spend, scenario.revenue, scenario.day_of_week, scenario.channels)
+    payload = {
+        "source": "fit_mmm on the media-market scenario (see growth_lab.marketing.mmm)",
+        "r_squared": round(fit.r_squared, 4),
+        "channels": [
+            {
+                "name": name,
+                "beta": round(float(fit.beta[c]), 2),
+                "decay": round(float(fit.decay[c]), 3),
+                "half_sat": round(float(fit.half_sat[c]), 2),
+                "current_daily_spend": round(float(np.mean(scenario.spend[:, c])), 2),
+            }
+            for c, name in enumerate(scenario.channels)
+        ],
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2))
+    print(f"wrote {out_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="growth_lab")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -129,12 +160,16 @@ def main() -> None:
     review = sub.add_parser("weekly-review", help="provenance-tracked growth review (md + pptx)")
     review.add_argument("--db", type=Path, default=Path("data/growth_lab.duckdb"))
     review.add_argument("--out", type=Path, default=Path("reports"))
+    export = sub.add_parser("export-mmm", help="fitted MMM params for the agent bridge")
+    export.add_argument("--out", type=Path, default=Path("models/mmm.json"))
     args = parser.parse_args()
 
     if args.command == "build":
         _build(args.db, args.seed)
     elif args.command == "weekly-review":
         _weekly_review(args.db, args.out)
+    elif args.command == "export-mmm":
+        _export_mmm(args.out)
     else:
         _causal_report()
 

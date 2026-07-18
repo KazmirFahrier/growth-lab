@@ -23,7 +23,7 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 | 3 | Marketing measurement (MMM, attribution vs. incrementality, LTV, budget) | ✅ |
 | 4 | Forecasting, anomaly detection, risk & calibration | ✅ |
 | 5 | Decision delivery (dashboard + provenance-tracked growth review) | ✅ |
-| 6 | Integration with campaign-copilot + audit | planned |
+| 6 | campaign-copilot bridge + audit-as-code | ✅ |
 
 ## Design
 
@@ -90,6 +90,19 @@ a cost-optimal threshold that must land on the analytic c_fp/(c_fp+c_fn)
 optimum; and a PSI drift monitor verified in both directions — silent on a
 fresh sample of the same population, alarming on a shifted regime.
 
+**growth-lab is an agent toolkit.** `integrations/` mirrors
+campaign-copilot's tool contract (`ToolSpec`, `ToolResult`, failures as
+results with machine-readable codes, `numeric_facts()` for grounding) and
+exposes the semantic layer, LTV, forecasting, and the MMM budget planner as
+mountable tools. The flagship demo answers "should we shift budget?" from
+fitted response curves, and the bridge gate verifies that every number a
+tool states in its content is licensed by its own data — so
+campaign-copilot's grounding checker passes these answers by construction.
+The audit is code too: `tests/test_readme_claims.py` fails CI if this
+README documents a CLI command that doesn't exist, marks a phase done
+without its packages, or quotes a causal-report table that no longer
+matches actual output.
+
 **Every reported number carries its lineage.** `reporting/` renders a
 weekly growth review (markdown + .pptx via one shared Figure layer) where
 each KPI embeds the exact semantic-layer SQL that produced it and each
@@ -125,6 +138,7 @@ src/growth_lab/
   forecasting/            Holt-Winters, boosted stumps, backtest, hierarchy
   risk/                   anomaly detection, calibration, drift (PSI)
   reporting/              Figure provenance, growth review (md + pptx)
+  integrations/           agent tool bridge (campaign-copilot contract)
 dashboard/                Streamlit app (optional extra: pip install -e ".[dashboard]")
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
@@ -142,6 +156,17 @@ pip install -e ".[dev]"
 python -m growth_lab build          # simulate → DuckDB → dbt → metric summary
 python -m growth_lab causal-report  # naive vs causal vs truth table
 python -m growth_lab weekly-review  # provenance-tracked memo (md + pptx)
+python -m growth_lab export-mmm     # MMM params artifact for the agent bridge
 pytest                              # all gates: calibration, recovery, provenance
 ruff check . && mypy               # style + strict types
 ```
+
+## Why this project exists
+
+NYC data science postings cluster into four families: product/
+experimentation, marketing/ads measurement, fintech forecasting & risk, and
+generalist ML. growth-lab covers all four in one coherent repo whose every
+claim is falsifiable against a sealed ground truth — and pairs with
+[campaign-copilot](../campaign-copilot) to make a single two-repo story:
+*building AI systems, and building the measurement science that keeps them
+honest.*

@@ -14,8 +14,8 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install
-        run: pip install -e ".[dev]"
+      - name: Install (pinned via constraints for reproducible CI)
+        run: pip install -e ".[dev]" -c constraints.txt
       - name: Lint
         run: ruff check .
       - name: Types

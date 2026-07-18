@@ -20,7 +20,21 @@ SEALED_PACKAGES: dict[str, tuple[str, ...]] = {
     "forecasting": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
     "risk": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
     "reporting": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
+    "integrations": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
 }
+
+
+def test_sealed_package_list_is_current() -> None:
+    """Every estimator/delivery package on disk must be in the seal list —
+    a new package cannot silently opt out of the audit."""
+    on_disk = {
+        p.name
+        for p in SRC.iterdir()
+        if p.is_dir() and (p / "__init__.py").exists() and p.name != "simulator"
+    }
+    assert on_disk == set(SEALED_PACKAGES), (
+        f"packages missing from seal audit: {on_disk ^ set(SEALED_PACKAGES)}"
+    )
 
 
 def test_sealed_packages_never_touch_truth() -> None:
