@@ -20,7 +20,7 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 | 0 | Simulator + DuckDB/dbt warehouse + semantic layer | ✅ |
 | 1 | Experimentation platform (power, SRM, sequential, CUPED) | ✅ |
 | 2 | Observational causal inference (DiD, RDD, IPW, IV, uplift) | ✅ |
-| 3 | Marketing measurement (Bayesian MMM, attribution vs. incrementality, LTV) | planned |
+| 3 | Marketing measurement (MMM, attribution vs. incrementality, LTV, budget) | ✅ |
 | 4 | Forecasting, anomaly detection, risk & calibration | planned |
 | 5 | Decision delivery (dashboard + auto-generated growth review) | planned |
 | 6 | Integration with campaign-copilot + audit | planned |
@@ -62,6 +62,17 @@ promo email      IPW          +0.1894   +0.0440   +0.0600
 price change     2SLS         +1.3184   -0.4022   -0.4000
 ```
 
+**Marketing measurement is scored against truth, including its blind spots.**
+`marketing/` implements MMM (geometric adstock + saturation, fit by
+coordinate descent with exact OLS conditioning, moving-block bootstrap
+intervals), three attribution models (last-touch, linear, Markov removal
+effect), censored-geometric subscription LTV, and a water-filling budget
+optimizer whose optimality is verified against brute force. The recovery
+gate demands MMM ROAS within 20% of truth on a DGP with go-dark windows,
+and — the honest headline — proves that *no* attribution model measures
+incrementality: all three over-credit the retargeting channel that harvests
+users already about to convert, with last-touch off by more than 3x.
+
 **The experimentation platform's error rates are themselves under test.**
 `experiments/` provides power analysis, deterministic hash assignment with SRM
 detection, two-proportion and Welch tests, CUPED variance reduction,
@@ -82,6 +93,7 @@ src/growth_lab/
   warehouse/              DuckDB landing, dbt orchestration, semantic layer
   experiments/            power, assignment/SRM, CUPED, sequential, readouts
   causal/                 DiD, RDD, IPW, 2SLS, uplift — with assumption gates
+  marketing/              MMM, attribution, LTV, budget optimizer
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
 ```
