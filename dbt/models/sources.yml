@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: As-landed tables from the ad platforms and the app event stream.
+    tables:
+      - name: ad_spend_daily
+      - name: signups
+      - name: transactions

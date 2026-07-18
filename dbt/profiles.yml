@@ -1,0 +1,7 @@
+growth_lab:
+  target: main
+  outputs:
+    main:
+      type: duckdb
+      path: "{{ env_var('GROWTH_LAB_DB', 'data/growth_lab.duckdb') }}"
+      threads: 4

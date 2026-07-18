@@ -1,0 +1,81 @@
+# ============================================================================
+# SEALED GROUND TRUTH — the data-generating process for the Meridian simulator.
+#
+# This file may be read ONLY by:
+#   * growth_lab.simulator  (it IS the DGP)
+#   * the scoring/calibration harness in tests/
+#
+# Estimators, warehouse models, and the semantic layer must never import it.
+# tests/test_no_truth_leak.py enforces this.
+# ============================================================================
+
+seed_default: 42
+horizon_days: 180
+start_date: 2025-01-01
+
+population:
+  # Latent user intent is the confounder: high-intent users click more,
+  # convert more, AND are over-served by retargeting-like channels.
+  p_high_intent: 0.25
+
+channels:
+  search:
+    daily_spend: 600.0
+    cpm: 25.0
+    ctr_low: 0.010
+    ctr_high: 0.030
+    cvr_low: 0.020
+    cvr_high: 0.100
+    high_intent_exposure_boost: 1.0
+  social:
+    daily_spend: 450.0
+    cpm: 12.0
+    ctr_low: 0.008
+    ctr_high: 0.018
+    cvr_low: 0.010
+    cvr_high: 0.060
+    high_intent_exposure_boost: 1.0
+  display:
+    # Retargeting-like: over-indexes on high-intent users (boost 3x).
+    # Its raw CVR will look excellent — the classic attribution trap.
+    daily_spend: 350.0
+    cpm: 6.0
+    ctr_low: 0.002
+    ctr_high: 0.012
+    cvr_low: 0.008
+    cvr_high: 0.090
+    high_intent_exposure_boost: 3.0
+  video:
+    daily_spend: 250.0
+    cpm: 15.0
+    ctr_low: 0.004
+    ctr_high: 0.010
+    cvr_low: 0.006
+    cvr_high: 0.040
+    high_intent_exposure_boost: 1.0
+
+organic:
+  daily_signups_low: 8.0
+  daily_signups_high: 30.0
+
+seasonality:
+  # Monday..Sunday multipliers applied to ad delivery (impressions).
+  dow_multipliers: [1.00, 1.02, 1.05, 1.05, 1.10, 0.90, 0.85]
+
+subscription:
+  trial_to_paid:
+    low: 0.55
+    high: 0.75
+  plan_pro_share:
+    low: 0.20
+    high: 0.50
+  price_basic: 9.99
+  price_pro: 19.99
+
+churn:
+  # Geometric monthly churn hazard by plan.
+  monthly_hazard_basic: 0.12
+  monthly_hazard_pro: 0.07
+
+fraud:
+  txn_fraud_rate: 0.015
