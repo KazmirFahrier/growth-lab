@@ -17,8 +17,8 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Simulator + DuckDB/dbt warehouse + semantic layer | ✅ this repo |
-| 1 | Experimentation platform (power, SRM, sequential, CUPED) | planned |
+| 0 | Simulator + DuckDB/dbt warehouse + semantic layer | ✅ |
+| 1 | Experimentation platform (power, SRM, sequential, CUPED) | ✅ |
 | 2 | Observational causal inference (DiD, RDD, PSM/IPW, IV, uplift) | planned |
 | 3 | Marketing measurement (Bayesian MMM, attribution vs. incrementality, LTV) | planned |
 | 4 | Forecasting, anomaly detection, risk & calibration | planned |
@@ -42,6 +42,17 @@ is wrong, everything downstream is meaningless — so it crashes, loudly.
 (`warehouse/semantic.py`) stores aggregate SQL expressions only; averaging
 daily ratios is unrepresentable. Unknown metrics raise, they don't default.
 
+**The experimentation platform's error rates are themselves under test.**
+`experiments/` provides power analysis, deterministic hash assignment with SRM
+detection, two-proportion and Welch tests, CUPED variance reduction,
+Lan-DeMets O'Brien-Fleming sequential boundaries (computed by numerical
+density propagation, validated against published tables), non-inferiority
+guardrails, and an automated readout with explicit launch/no-launch rules.
+`tests/test_experiment_calibration.py` is the Monte Carlo gate: A/A
+false-positive rates must sit within sampling error of alpha, designs sized
+for 80% power must deliver it, naive peeking must reproduce the known FPR
+inflation, and the sequential boundaries must cure it — or CI fails.
+
 ## Layout
 
 ```
@@ -49,6 +60,7 @@ truth.yaml                sealed DGP (simulator + tests only)
 src/growth_lab/
   simulator/              params loader + vectorized event generation
   warehouse/              DuckDB landing, dbt orchestration, semantic layer
+  experiments/            power, assignment/SRM, CUPED, sequential, readouts
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
 ```
