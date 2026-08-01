@@ -17,5 +17,5 @@ PyYAML==6.0.3
 ruff==0.15.22
 scikit-learn==1.9.0
 types-PyYAML==6.0.12.20260518
-uvicorn==0.51.0
+uvicorn==0.52.0
 xgboost==3.3.0
