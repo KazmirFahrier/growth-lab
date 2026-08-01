@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
 
 import numpy as np
+from typing import Optional
 import pandas as pd
 
 
@@ -37,7 +37,7 @@ class DriftMonitor:
     """Track data drift between a reference distribution and live predictions."""
 
     def __init__(self, drift_threshold: float = 0.1):
-        self._reference: Optional[pd.DataFrame] = None
+        self._reference: pd.DataFrame | None = None
         self._threshold = drift_threshold
 
     def set_reference(self, df: pd.DataFrame) -> None:
@@ -45,7 +45,7 @@ class DriftMonitor:
         self._reference = df.copy()
 
     def check(
-        self, current: pd.DataFrame, prediction_scores: Optional[np.ndarray] = None
+        self, current: pd.DataFrame, prediction_scores: np.ndarray | None = None
     ) -> DriftReport:
         """Compare current data against the reference baseline.
 

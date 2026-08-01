@@ -74,10 +74,14 @@ class CalibrationMonitor:
             ece=ece,
             bins=bins_data,
             is_calibrated=ece <= self._ece_threshold,
-            warning="" if ece <= self._ece_threshold else f"ECE {ece:.4f} exceeds threshold {self._ece_threshold}",
+            warning=(
+                "" if ece <= self._ece_threshold else f"ECE {ece:.4f} exceeds threshold {self._ece_threshold}"
+            ),
         )
 
 
-def calibration_report(monitor: CalibrationMonitor, y_prob: np.ndarray, y_true: np.ndarray) -> CalibrationReport:
+def calibration_report(
+    monitor: CalibrationMonitor, y_prob: np.ndarray, y_true: np.ndarray
+) -> CalibrationReport:
     """Convenience: run a calibration check."""
     return monitor.check(y_prob, y_true)
