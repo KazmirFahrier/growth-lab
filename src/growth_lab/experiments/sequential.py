@@ -113,9 +113,7 @@ class SequentialDesign:
     def first_crossing(self, z_at_looks: FloatArray) -> int | None:
         """Index of the first look whose |z| crosses its boundary, else None."""
         if len(z_at_looks) != self.n_looks:
-            raise ValueError(
-                f"expected {self.n_looks} z-values, got {len(z_at_looks)}"
-            )
+            raise ValueError(f"expected {self.n_looks} z-values, got {len(z_at_looks)}")
         crossed = np.abs(z_at_looks) > np.asarray(self.boundaries)
         hits = np.flatnonzero(crossed)
         return int(hits[0]) if len(hits) else None

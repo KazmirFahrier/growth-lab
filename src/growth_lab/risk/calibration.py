@@ -72,9 +72,7 @@ def expected_calibration_error(
 ) -> float:
     bins = reliability_curve(labels, probabilities, n_bins)
     total = sum(b.count for b in bins)
-    return sum(
-        (b.count / total) * abs(b.observed_rate - b.mean_predicted) for b in bins
-    )
+    return sum((b.count / total) * abs(b.observed_rate - b.mean_predicted) for b in bins)
 
 
 @dataclass(frozen=True)

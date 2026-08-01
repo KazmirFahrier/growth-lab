@@ -26,15 +26,33 @@ class OlsFit:
 
 def ols(design: FloatArray, y: FloatArray) -> OlsFit:
     """Ordinary least squares; `design` must already include any intercept."""
+    if design.ndim != 2 or y.ndim != 1 or len(design) != len(y):
+        raise ValueError(
+            "design must be two dimensional and aligned with a one dimensional outcome"
+        )
+    if not np.isfinite(design).all() or not np.isfinite(y).all():
+        raise ValueError("regression inputs must be finite")
     n, k = design.shape
     if n <= k:
         raise ValueError(f"need more observations ({n}) than parameters ({k})")
-    gram = design.T @ design
-    beta: FloatArray = np.linalg.solve(gram, design.T @ y).astype(np.float64)
-    residuals = y - design @ beta
+    # Some Apple Accelerate builds raise spurious floating point warnings for
+    # finite matrix products. Validate results explicitly instead of leaking
+    # thousands of false warnings during the MMM coordinate search.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        gram = design.T @ design
+        beta: FloatArray = np.linalg.solve(gram, design.T @ y).astype(np.float64)
+        residuals = y - design @ beta
+    if (
+        not np.isfinite(gram).all()
+        or not np.isfinite(beta).all()
+        or not np.isfinite(residuals).all()
+    ):
+        raise ValueError("regression calculation produced nonfinite values")
     sigma2 = float(residuals @ residuals) / (n - k)
     cov = sigma2 * np.linalg.inv(gram)
     se = np.sqrt(np.diag(cov))
+    if not np.isfinite(se).all():
+        raise ValueError("regression standard errors are not finite")
     return OlsFit(beta=beta, se=se, residuals=residuals)
 
 

@@ -210,7 +210,5 @@ def test_optimizer_matches_brute_force_on_two_channels() -> None:
     budget = 1000.0
     allocation = optimal_allocation(two, total_daily_budget=budget)
     grid = np.linspace(0.0, budget, 2001)
-    best = max(
-        two[0].revenue(float(s)) + two[1].revenue(float(budget - s)) for s in grid
-    )
+    best = max(two[0].revenue(float(s)) + two[1].revenue(float(budget - s)) for s in grid)
     assert allocation.expected_daily_revenue == pytest.approx(best, rel=1e-4)

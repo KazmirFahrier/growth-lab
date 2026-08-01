@@ -42,10 +42,14 @@ def connection() -> duckdb.DuckDBPyConnection:
 
 @st.cache_data
 def revenue_series() -> pd.DataFrame:
-    return connection().execute(
-        "SELECT date, SUM(revenue) AS revenue FROM marts.mart_daily_channel "
-        "GROUP BY date ORDER BY date"
-    ).df()
+    return (
+        connection()
+        .execute(
+            "SELECT date, SUM(revenue) AS revenue FROM marts.mart_daily_channel "
+            "GROUP BY date ORDER BY date"
+        )
+        .df()
+    )
 
 
 overview, channels_tab, mmm_tab, forecast_tab, experiment_tab = st.tabs(
@@ -59,9 +63,7 @@ with overview:
     cols = st.columns(6)
     labels = ["Spend", "Signups", "Paid", "Revenue", "CAC", "Fraud rate"]
     formats = ["${:,.0f}", "{:,.0f}", "{:,.0f}", "${:,.0f}", "${:,.2f}", "{:.2%}"]
-    for col, label, fmt, key in zip(
-        cols, labels, formats, kpis.columns, strict=True
-    ):
+    for col, label, fmt, key in zip(cols, labels, formats, kpis.columns, strict=True):
         col.metric(label, fmt.format(float(kpis[key].iloc[0])))
     st.caption("All metrics are ratio-of-sums from the semantic layer.")
 
@@ -125,9 +127,7 @@ with forecast_tab:
     forecast = model.predict(horizon)
     history = pd.DataFrame({"revenue": revenue}, index=pd.to_datetime(series["date"]))
     future_idx = pd.date_range(history.index[-1] + pd.Timedelta(days=1), periods=horizon)
-    combined = pd.concat(
-        [history, pd.DataFrame({"forecast": forecast}, index=future_idx)]
-    )
+    combined = pd.concat([history, pd.DataFrame({"forecast": forecast}, index=future_idx)])
     st.line_chart(combined)
 
     detector = mad_residual_detector(revenue)

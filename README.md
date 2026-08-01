@@ -9,7 +9,7 @@ causal estimates, marketing measurement, and forecasts (Phases 1–5) are scored
 against parameters the estimators are structurally barred from reading —
 `tests/test_no_truth_leak.py` enforces the seal.
 
-Companion project: [campaign-copilot](../campaign-copilot) — the AI-agent side
+Companion project: [campaign-copilot](https://github.com/KazmirFahrier/campaign-copilot) — the AI-agent side
 of the same domain. campaign-copilot answers *"can an agent answer marketing
 questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 
@@ -139,9 +139,11 @@ src/growth_lab/
   risk/                   anomaly detection, calibration, drift (PSI)
   reporting/              Figure provenance, growth review (md + pptx)
   integrations/           agent tool bridge (campaign-copilot contract)
+  service/                authenticated API, health, readiness, telemetry
 dashboard/                Streamlit app (optional extra: pip install -e ".[dashboard]")
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
+docs/                     operations and incident runbook
 ```
 
 Warehouse schemas: `raw` (as-landed) → `staging` (dbt views) → `marts`
@@ -161,12 +163,36 @@ pytest                              # all gates: calibration, recovery, provenan
 ruff check . && mypy               # style + strict types
 ```
 
+## Production service
+
+The production boundary exposes governed metrics, forecasting, and budget
+planning through an authenticated FastAPI service. Raw SQL is never accepted
+from clients. Metric filters are typed and bound as DuckDB parameters. The
+runtime also provides correlation IDs, structured JSON logs, health and
+readiness probes, bounded request bodies, security headers, and Prometheus
+text metrics.
+
+Create a secret with at least thirty two characters, then start the hardened
+container profile:
+
+```bash
+export GROWTH_LAB_API_KEY="$(openssl rand -hex 32)"
+docker compose up --build
+curl http://127.0.0.1:8000/readyz
+curl -H "X-API-Key: $GROWTH_LAB_API_KEY" http://127.0.0.1:8000/metrics
+```
+
+The image runs as an unprivileged user with a read only filesystem, all Linux
+capabilities removed, a process limit, and explicit CPU and memory limits.
+See [`docs/operations.md`](docs/operations.md) for configuration, deployment,
+monitoring, rollback, and incident procedures.
+
 ## Why this project exists
 
 NYC data science postings cluster into four families: product/
 experimentation, marketing/ads measurement, fintech forecasting & risk, and
 generalist ML. growth-lab covers all four in one coherent repo whose every
 claim is falsifiable against a sealed ground truth — and pairs with
-[campaign-copilot](../campaign-copilot) to make a single two-repo story:
+[campaign-copilot](https://github.com/KazmirFahrier/campaign-copilot) to make a single two-repo story:
 *building AI systems, and building the measurement science that keeps them
 honest.*

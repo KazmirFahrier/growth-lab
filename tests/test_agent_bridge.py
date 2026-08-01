@@ -34,9 +34,7 @@ def _content_is_grounded(result: ToolResult) -> bool:
     facts = result.numeric_facts()
     for token in NUMBER.findall(result.content):
         value = abs(float(token.replace(",", "")))
-        if not any(
-            abs(value - abs(fact)) <= max(0.01, 0.005 * abs(fact)) for fact in facts
-        ):
+        if not any(abs(value - abs(fact)) <= max(0.01, 0.005 * abs(fact)) for fact in facts):
             return False
     return True
 
@@ -112,9 +110,25 @@ def test_metrics_tool_failures_are_results(db_path: Path) -> None:
     bad_metric = tool.run(metrics=["made_up"])
     assert not bad_metric.ok and bad_metric.error_code == "INVALID_METRIC"
     injection = tool.run(metrics=["cac"], where="1=1; DROP TABLE x")
-    assert not injection.ok and injection.error_code == "FORBIDDEN_SQL"
+    assert not injection.ok and injection.error_code == "UNSAFE_FILTER"
+    bad_dimension = tool.run(metrics=["cac"], by=["channel, sim_hidden.users_latent"])
+    assert not bad_dimension.ok and bad_dimension.error_code == "INVALID_DIMENSION"
     missing = QueryGrowthMetricsTool(Path("nowhere.duckdb")).run(metrics=["cac"])
     assert not missing.ok and missing.error_code == "WAREHOUSE_UNAVAILABLE"
+
+
+def test_metrics_tool_binds_external_filters(db_path: Path) -> None:
+    tool = QueryGrowthMetricsTool(db_path)
+    attempted_injection = "display' OR 1=1 --"
+    result = tool.run(
+        metrics=["revenue"],
+        by=["channel"],
+        filters={"channel": attempted_injection},
+    )
+    assert result.ok
+    assert result.data["rows"] == []
+    assert attempted_injection not in result.data["sql"]
+    assert result.data["parameters"] == [attempted_injection]
 
 
 def test_ltv_and_forecast_tools_work(db_path: Path) -> None:

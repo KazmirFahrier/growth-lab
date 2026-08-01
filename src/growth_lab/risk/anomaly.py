@@ -52,9 +52,7 @@ def mad_residual_detector(y: FloatArray, threshold_sigmas: float = 5.0) -> Resid
         raise ValueError("series has zero robust dispersion; detector is undefined")
     scores = np.abs(residual) / robust_sigma
     flagged: IntArray = np.flatnonzero(scores > threshold_sigmas).astype(np.int64)
-    return ResidualAnomalies(
-        flagged_days=flagged, scores=scores, threshold_sigmas=threshold_sigmas
-    )
+    return ResidualAnomalies(flagged_days=flagged, scores=scores, threshold_sigmas=threshold_sigmas)
 
 
 # --- isolation forest (from scratch) ----------------------------------------

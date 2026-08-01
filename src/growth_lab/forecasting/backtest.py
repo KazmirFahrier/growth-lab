@@ -48,9 +48,7 @@ def _quantile_forecasts(
     probe = type(model)()  # fresh instance of the same forecaster class
     probe.fit(fit_part)
     errors = check_part - probe.predict(holdout)
-    return {
-        q: point if q == 0.5 else point + float(np.quantile(errors, q)) for q in QUANTILES
-    }
+    return {q: point if q == 0.5 else point + float(np.quantile(errors, q)) for q in QUANTILES}
 
 
 def rolling_origin_backtest(

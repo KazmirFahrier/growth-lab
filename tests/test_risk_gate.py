@@ -101,9 +101,7 @@ def test_psi_stable_on_same_population() -> None:
     ref = fraud_transactions(seed=7)
     cur = fraud_transactions(seed=9)
     velocity = ref.feature_names.index("velocity")
-    report = population_stability_index(
-        ref.features[:, velocity], cur.features[:, velocity]
-    )
+    report = population_stability_index(ref.features[:, velocity], cur.features[:, velocity])
     assert report.status == "stable", f"false drift alarm: PSI {report.psi:.3f}"
 
 
@@ -111,8 +109,6 @@ def test_psi_alarms_on_regime_shift() -> None:
     ref = fraud_transactions(seed=7)
     shifted = fraud_transactions(seed=9, shifted=True)
     velocity = ref.feature_names.index("velocity")
-    report = population_stability_index(
-        ref.features[:, velocity], shifted.features[:, velocity]
-    )
+    report = population_stability_index(ref.features[:, velocity], shifted.features[:, velocity])
     assert report.status == "alarm", f"missed drift: PSI {report.psi:.3f}"
     assert report.psi > 0.25

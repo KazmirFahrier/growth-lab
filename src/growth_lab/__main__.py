@@ -20,7 +20,8 @@ def _build(db_path: Path, seed: int | None) -> None:
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         summary = compute_metrics(
-            con, ["spend", "signups", "paid_signups", "ctr", "cvr", "cac", "revenue"],
+            con,
+            ["spend", "signups", "paid_signups", "ctr", "cvr", "cac", "revenue"],
             by=["channel"],
         )
     finally:

@@ -20,7 +20,7 @@ import duckdb
 from growth_lab.simulator.generate import SimOutput
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DBT_DIR = REPO_ROOT / "dbt"
+DBT_DIR = Path(os.environ.get("GROWTH_LAB_DBT_DIR", str(REPO_ROOT / "dbt")))
 DB_ENV_VAR = "GROWTH_LAB_DB"
 
 

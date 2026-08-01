@@ -7,6 +7,8 @@ __pycache__/
 data/
 models/
 reports/
+build/
+dist/
 *.duckdb
 *.duckdb.wal
 dbt/target/
@@ -14,3 +16,6 @@ dbt/dbt_packages/
 dbt/logs/
 logs/
 .venv/
+.env
+.env.*
+!.env.example

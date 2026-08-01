@@ -22,8 +22,14 @@ from growth_lab.risk import mad_residual_detector
 from growth_lab.warehouse.semantic import compute_metrics, metric_query
 
 KPI_METRICS = ("spend", "signups", "paid_signups", "revenue", "cac", "fraud_rate")
-KPI_UNITS = {"spend": "$", "revenue": "$", "cac": "$", "fraud_rate": "%",
-             "signups": "int", "paid_signups": "int"}
+KPI_UNITS = {
+    "spend": "$",
+    "revenue": "$",
+    "cac": "$",
+    "fraud_rate": "%",
+    "signups": "int",
+    "paid_signups": "int",
+}
 FORECAST_HORIZON_DAYS = 14
 
 
@@ -93,14 +99,10 @@ def _channel_figure(
 LTV_USERS_SQL = (
     "SELECT user_id, signup_date, channel, is_paid AS subscribed, plan FROM marts.dim_users"
 )
-LTV_TXNS_SQL = (
-    "SELECT txn_id, user_id, txn_date, amount, is_fraud FROM marts.fct_transactions"
-)
+LTV_TXNS_SQL = "SELECT txn_id, user_id, txn_date, amount, is_fraud FROM marts.fct_transactions"
 
 
-def _ltv_figures(
-    con: duckdb.DuckDBPyConnection, figures: FigureRegistry, as_of: date
-) -> None:
+def _ltv_figures(con: duckdb.DuckDBPyConnection, figures: FigureRegistry, as_of: date) -> None:
     users = con.execute(LTV_USERS_SQL).df()
     txns = con.execute(LTV_TXNS_SQL).df()
     estimate = fit_geometric_ltv(users, txns, pd.Timestamp(as_of))
@@ -132,14 +134,11 @@ def _ltv_figures(
 
 
 REVENUE_SERIES_SQL = (
-    "SELECT date, SUM(revenue) AS revenue FROM marts.mart_daily_channel "
-    "GROUP BY date ORDER BY date"
+    "SELECT date, SUM(revenue) AS revenue FROM marts.mart_daily_channel GROUP BY date ORDER BY date"
 )
 
 
-def _forecast_and_anomaly_figures(
-    con: duckdb.DuckDBPyConnection, figures: FigureRegistry
-) -> None:
+def _forecast_and_anomaly_figures(con: duckdb.DuckDBPyConnection, figures: FigureRegistry) -> None:
     series = con.execute(REVENUE_SERIES_SQL).df()
     revenue = series["revenue"].to_numpy(dtype=np.float64)
 

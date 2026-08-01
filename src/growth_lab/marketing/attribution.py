@@ -39,9 +39,7 @@ def linear_touch(paths: list[list[str]], converted: BoolArray) -> dict[str, floa
     return dict(credit)
 
 
-def _transition_counts(
-    paths: list[list[str]], converted: BoolArray
-) -> dict[str, dict[str, float]]:
+def _transition_counts(paths: list[list[str]], converted: BoolArray) -> dict[str, dict[str, float]]:
     counts: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for path, conv in zip(paths, converted, strict=True):
         states = [START, *path, CONVERTED if conv else NULL]

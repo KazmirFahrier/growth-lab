@@ -24,6 +24,7 @@ BoolArray = npt.NDArray[np.bool_]
 
 # --- DiD: staggered feature rollout by geo ---------------------------------
 
+
 @dataclass(frozen=True)
 class GeoRolloutScenario:
     panel: pd.DataFrame  # geo, day, treated, post, y
@@ -80,6 +81,7 @@ def geo_rollout(
 
 # --- RDD: benefit granted above a spend threshold ---------------------------
 
+
 @dataclass(frozen=True)
 class SpendThresholdScenario:
     running: FloatArray  # past-spend score (running variable)
@@ -114,6 +116,7 @@ def spend_threshold(
 
 
 # --- IPW / uplift: self-selected promo email --------------------------------
+
 
 @dataclass(frozen=True)
 class PromoEmailScenario:
@@ -166,6 +169,7 @@ def promo_email(
 
 
 # --- IV: endogenous price with a cost-shifter instrument --------------------
+
 
 @dataclass(frozen=True)
 class PriceInstrumentScenario:
@@ -295,6 +299,7 @@ def mmm_market(seed: int = 4, n_days: int = 600) -> MmmScenario:
 
 # --- attribution: multi-touch journeys with a retargeting harvester ---------
 
+
 @dataclass(frozen=True)
 class JourneyScenario:
     paths: list[list[str]]  # touchpoint sequences, converters and not
@@ -347,6 +352,7 @@ def journey_paths(seed: int = 5, n_users: int = 20_000) -> JourneyScenario:
 
 
 # --- forecasting: hierarchical daily revenue with injected anomalies --------
+
 
 @dataclass(frozen=True)
 class DailySeriesScenario:
@@ -402,6 +408,7 @@ def daily_series(seed: int = 6, n_days: int = 600, n_anomalies: int = 12) -> Dai
 
 
 # --- risk: transaction fraud with a learnable signal ------------------------
+
 
 @dataclass(frozen=True)
 class FraudScenario:

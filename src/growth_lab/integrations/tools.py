@@ -11,7 +11,7 @@ Failures are results with machine-readable codes, never exceptions.
 from __future__ import annotations
 
 import json
-import re
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,9 +22,13 @@ import numpy as np
 from growth_lab.forecasting import HoltWinters
 from growth_lab.integrations.contract import ToolResult, ToolSpec
 from growth_lab.marketing import ChannelResponse, fit_geometric_ltv, optimal_allocation
-from growth_lab.warehouse.semantic import METRICS, compute_metrics, metric_query
-
-_FORBIDDEN_FILTER = re.compile(r";|--|\b(drop|delete|insert|update|attach|copy)\b", re.IGNORECASE)
+from growth_lab.warehouse.semantic import (
+    DIMENSIONS,
+    METRICS,
+    MetricFilters,
+    compute_metrics,
+    parameterized_metric_query,
+)
 
 
 def _connect(db_path: Path) -> duckdb.DuckDBPyConnection | ToolResult:
@@ -33,7 +37,10 @@ def _connect(db_path: Path) -> duckdb.DuckDBPyConnection | ToolResult:
             "WAREHOUSE_UNAVAILABLE",
             f"no warehouse at {db_path}; run `python -m growth_lab build` first",
         )
-    return duckdb.connect(str(db_path), read_only=True)
+    try:
+        return duckdb.connect(str(db_path), read_only=True)
+    except duckdb.Error:
+        return ToolResult.failure("WAREHOUSE_UNAVAILABLE", "warehouse could not be opened")
 
 
 @dataclass
@@ -56,40 +63,67 @@ class QueryGrowthMetricsTool:
                 "properties": {
                     "metrics": {"type": "array", "items": {"type": "string"}},
                     "by": {"type": "array", "items": {"type": "string"}},
-                    "where": {"type": "string"},
+                    "filters": {
+                        "type": "object",
+                        "properties": {
+                            "channel": {"type": "string", "maxLength": 128},
+                            "start_date": {"type": "string", "format": "date"},
+                            "end_date": {"type": "string", "format": "date"},
+                        },
+                        "additionalProperties": False,
+                    },
                 },
                 "required": ["metrics"],
+                "additionalProperties": False,
             },
         )
 
     def run(self, **kwargs: Any) -> ToolResult:
         metrics = list(kwargs.get("metrics", []))
         by = list(kwargs.get("by", []) or [])
-        where = kwargs.get("where")
         unknown = [m for m in metrics if m not in METRICS]
         if not metrics or unknown:
             return ToolResult.failure(
                 "INVALID_METRIC",
                 f"unknown metric(s) {unknown}; known: {sorted(METRICS)}",
             )
-        if where and _FORBIDDEN_FILTER.search(where):
+        invalid_dimensions = [dimension for dimension in by if dimension not in DIMENSIONS]
+        if invalid_dimensions:
             return ToolResult.failure(
-                "FORBIDDEN_SQL", "filter may only restrict rows, not run statements"
+                "INVALID_DIMENSION",
+                f"unknown dimension(s) {invalid_dimensions}; known: {sorted(DIMENSIONS)}",
             )
+        if "where" in kwargs:
+            return ToolResult.failure(
+                "UNSAFE_FILTER",
+                "raw SQL filters are not accepted; use the structured filters object",
+            )
+        try:
+            filters = MetricFilters.from_mapping(kwargs.get("filters"))
+        except ValueError as error:
+            return ToolResult.failure("INVALID_FILTER", str(error))
         con = _connect(self.db_path)
         if isinstance(con, ToolResult):
             return con
         try:
-            frame = compute_metrics(con, metrics, by=by or None, where=where)
+            frame = compute_metrics(con, metrics, by=by or None, filters=filters)
+        except duckdb.Error:
+            return ToolResult.failure("WAREHOUSE_QUERY_FAILED", "metric query failed")
         finally:
             con.close()
-        rows = frame.to_dict(orient="records")
+        serialized = frame.to_json(orient="records", date_format="iso")
+        if serialized is None:
+            return ToolResult.failure("WAREHOUSE_QUERY_FAILED", "metric result could not serialize")
+        rows = json.loads(serialized)
+        sql, parameters = parameterized_metric_query(metrics, by=by or None, filters=filters)
         return ToolResult.success(
-            f"{len(rows)} row(s) for {', '.join(metrics)}"
-            + (f" by {', '.join(by)}" if by else ""),
+            f"{len(rows)} row(s) for {', '.join(metrics)}" + (f" by {', '.join(by)}" if by else ""),
             row_count=len(rows),
             rows=rows,
-            sql=metric_query(metrics, by=by or None, where=where),
+            sql=sql,
+            parameters=[
+                value.isoformat() if hasattr(value, "isoformat") else value for value in parameters
+            ],
         )
 
 
@@ -122,10 +156,11 @@ class LtvSummaryTool:
                 "FROM marts.dim_users"
             ).df()
             txns = con.execute(
-                "SELECT txn_id, user_id, txn_date, amount, is_fraud "
-                "FROM marts.fct_transactions"
+                "SELECT txn_id, user_id, txn_date, amount, is_fraud FROM marts.fct_transactions"
             ).df()
             row = con.execute("SELECT max(date) FROM marts.mart_daily_channel").fetchone()
+        except duckdb.Error:
+            return ToolResult.failure("WAREHOUSE_QUERY_FAILED", "LTV query failed")
         finally:
             con.close()
         if row is None or row[0] is None:
@@ -181,8 +216,14 @@ class ForecastRevenueTool:
                 "SELECT date, SUM(revenue) AS revenue FROM marts.mart_daily_channel "
                 "GROUP BY date ORDER BY date"
             ).df()
+        except duckdb.Error:
+            return ToolResult.failure("WAREHOUSE_QUERY_FAILED", "forecast query failed")
         finally:
             con.close()
+        if len(series) < 14:
+            return ToolResult.failure(
+                "INSUFFICIENT_HISTORY", "at least 14 daily observations are required"
+            )
         model = HoltWinters()
         model.fit(series["revenue"].to_numpy(dtype=np.float64))
         point = model.predict(horizon)
@@ -219,7 +260,7 @@ class BudgetPlannerTool:
 
     def run(self, **kwargs: Any) -> ToolResult:
         budget = float(kwargs.get("total_daily_budget", 0.0))
-        if budget <= 0:
+        if not math.isfinite(budget) or budget <= 0:
             return ToolResult.failure("INVALID_BUDGET", "total_daily_budget must be positive")
         if not self.params_path.exists():
             return ToolResult.failure(
@@ -227,12 +268,19 @@ class BudgetPlannerTool:
                 f"no fitted MMM parameters at {self.params_path}; "
                 "run `python -m growth_lab export-mmm` first",
             )
-        params = json.loads(self.params_path.read_text())
-        responses = tuple(
-            ChannelResponse(c["name"], c["beta"], c["decay"], c["half_sat"])
-            for c in params["channels"]
-        )
-        current = {c["name"]: float(c["current_daily_spend"]) for c in params["channels"]}
+        try:
+            params = json.loads(self.params_path.read_text())
+            channels = params["channels"]
+            responses = tuple(
+                ChannelResponse(c["name"], c["beta"], c["decay"], c["half_sat"]) for c in channels
+            )
+            current = {c["name"]: float(c["current_daily_spend"]) for c in channels}
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return ToolResult.failure("INVALID_MMM_PARAMS", "MMM parameter artifact is invalid")
+        if not responses:
+            return ToolResult.failure(
+                "INVALID_MMM_PARAMS", "MMM parameter artifact has no channels"
+            )
 
         allocation = optimal_allocation(responses, budget)
         current_revenue = sum(r.revenue(current[r.name]) for r in responses)

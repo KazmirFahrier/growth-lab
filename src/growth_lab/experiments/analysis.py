@@ -64,9 +64,7 @@ def two_proportion_ztest(
     z = diff / se_pool
     p_value = 2.0 * (1.0 - _NORMAL.cdf(abs(z)))
 
-    se_unpooled = math.sqrt(
-        p_c * (1.0 - p_c) / n_control + p_t * (1.0 - p_t) / n_treatment
-    )
+    se_unpooled = math.sqrt(p_c * (1.0 - p_c) / n_control + p_t * (1.0 - p_t) / n_treatment)
     z_crit = _NORMAL.inv_cdf(1.0 - alpha / 2.0)
     return TestResult(
         estimate=diff,

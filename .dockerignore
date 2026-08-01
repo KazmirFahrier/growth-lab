@@ -1,0 +1,17 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+*.pyc
+*.duckdb
+*.duckdb.wal
+data
+dist
+models
+reports
+dbt/logs
+dbt/target
+src/*.egg-info

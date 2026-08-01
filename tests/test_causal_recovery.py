@@ -21,6 +21,7 @@ from growth_lab.causal import (
     t_learner,
     two_stage_least_squares,
 )
+from growth_lab.causal._regression import add_intercept, ols
 from growth_lab.simulator.scenarios import (
     geo_rollout,
     price_instrument,
@@ -28,15 +29,20 @@ from growth_lab.simulator.scenarios import (
     spend_threshold,
 )
 
+
+def test_ols_rejects_nonfinite_inputs() -> None:
+    design = add_intercept(np.array([1.0, 2.0, np.inf]))
+    with pytest.raises(ValueError, match="must be finite"):
+        ols(design, np.array([2.0, 4.0, 6.0]))
+
+
 # --- DiD --------------------------------------------------------------------
 
 
 def test_did_naive_cross_section_is_biased() -> None:
     s = geo_rollout()
     post = s.panel[s.panel["post"]]
-    naive = naive_difference(
-        post["y"].to_numpy(dtype=float), post["treated"].to_numpy(dtype=bool)
-    )
+    naive = naive_difference(post["y"].to_numpy(dtype=float), post["treated"].to_numpy(dtype=bool))
     assert abs(naive - s.true_att) > 0.01, "selection bias vanished; scenario is broken"
 
 

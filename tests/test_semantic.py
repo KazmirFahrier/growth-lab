@@ -3,12 +3,40 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from growth_lab.warehouse.semantic import METRICS, compute_metrics, metric_query
+from growth_lab.warehouse.semantic import (
+    METRICS,
+    MetricFilters,
+    compute_metrics,
+    metric_query,
+    parameterized_metric_query,
+)
 
 
 def test_unknown_metric_raises() -> None:
     with pytest.raises(KeyError):
         metric_query(["ctr", "made_up_metric"])
+
+
+def test_unknown_or_duplicate_dimension_raises() -> None:
+    with pytest.raises(ValueError, match="unknown dimension"):
+        metric_query(["revenue"], by=["channel; SELECT 1"])
+    with pytest.raises(ValueError, match="duplicates"):
+        metric_query(["revenue"], by=["channel", "channel"])
+
+
+def test_external_filters_are_parameterized() -> None:
+    payload = "display' OR 1=1 --"
+    sql, parameters = parameterized_metric_query(
+        ["revenue"], by=["channel"], filters=MetricFilters(channel=payload)
+    )
+    assert payload not in sql
+    assert "channel = ?" in sql
+    assert parameters == (payload,)
+
+
+def test_filter_dates_must_be_ordered() -> None:
+    with pytest.raises(ValueError, match="start_date"):
+        MetricFilters.from_mapping({"start_date": "2026-02-02", "end_date": "2026-01-01"})
 
 
 def test_every_metric_computes(warehouse: duckdb.DuckDBPyConnection) -> None:

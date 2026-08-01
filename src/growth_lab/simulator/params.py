@@ -6,6 +6,7 @@ Estimators and warehouse code are barred from it (see tests/test_no_truth_leak.p
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_TRUTH_PATH = REPO_ROOT / "truth.yaml"
+DEFAULT_TRUTH_PATH = Path(os.environ.get("GROWTH_LAB_TRUTH_PATH", str(REPO_ROOT / "truth.yaml")))
 
 
 @dataclass(frozen=True)
