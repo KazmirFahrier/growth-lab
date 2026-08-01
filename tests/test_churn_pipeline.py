@@ -6,6 +6,7 @@ All tests are self-contained and deterministic (fixed seed).
 
 from __future__ import annotations
 
+import json
 import tempfile
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -85,6 +86,7 @@ class TestTrainingPipeline:
         assert isinstance(card, dict)
         assert "best_model" in card
         assert card.get("best_test_auc", 0) > 0
+        json.dumps(card, default=str)
 
 
 class TestServingSchema:

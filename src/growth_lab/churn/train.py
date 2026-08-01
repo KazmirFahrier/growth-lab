@@ -240,7 +240,7 @@ def train_pipeline(
             "n_users": ts.n_users,
             "churn_rate": ts.churn_rate,
             "feature_names": ts.feature_names,
-            "metrics": results,
+            "metrics": dict(results),
         }
         mlflow.log_dict(model_card, "model_card.json")
         (MODEL_DIR / "model_card.json").write_text(json.dumps(model_card, indent=2, default=str))

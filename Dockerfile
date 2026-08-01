@@ -22,7 +22,8 @@ RUN python -m growth_lab build --db /build/data/growth_lab.duckdb \
 FROM builder AS churn-builder
 
 ENV GROWTH_LAB_MODEL_DIR=/build/models \
-    MLFLOW_TRACKING_URI=sqlite:////build/mlflow.db
+    MLFLOW_TRACKING_URI=sqlite:////build/mlflow.db \
+    GIT_PYTHON_REFRESH=quiet
 RUN pip install ".[ml]" -c constraints.txt
 RUN growth-lab-train \
     --db /build/data/growth_lab.duckdb \
