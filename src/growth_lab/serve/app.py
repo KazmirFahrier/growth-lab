@@ -1,7 +1,8 @@
 """FastAPI churn prediction service.
 
 Serves the trained churn model with validated schemas, Prometheus metrics,
-and health checks. Loads the model artifact from models/churn_model.joblib.
+and health checks. Loads the model artifact from models/churn_model.joblib
+and feature names from models/feature_names.json (written by training).
 
 Usage:
   growth-lab-serve
@@ -10,22 +11,20 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import warnings
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import joblib
 import numpy as np
-import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
-from starlette.requests import Request
 from starlette.responses import Response
 
 from growth_lab.serve.schemas import (
@@ -41,27 +40,34 @@ from growth_lab.serve.schemas import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── constants ────────────────────────────────────────────────────────────
+# ── paths ────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL_PATH = REPO_ROOT / "models" / "churn_model.joblib"
-MODEL_VERSION = "0.1.0"
-FEATURE_NAMES = [
-    "tenure_days",
-    "txn_count_obs",
-    "total_spend_obs",
-    "avg_txn_amount_obs",
-    "days_since_last_txn",
-    "txn_freq_monthly",
-    "had_fraud_obs",
-    "signup_dow",
-    "signup_month",
-    "channel_display",
-    "channel_organic",
-    "channel_search",
-    "channel_social",
-    "channel_video",
-    "plan_pro",
-]
+FEATURE_NAMES_PATH = REPO_ROOT / "models" / "feature_names.json"
+MODEL_VERSION = "0.2.0"
+
+# ── categorical levels (must match features.py) ──────────────────────────
+CHANNEL_LEVELS = ["display", "organic", "search", "social", "video"]
+PLAN_LEVELS = ["basic", "pro"]
+
+
+def _load_feature_names() -> list[str]:
+    """Load the canonical feature list written during training."""
+    if FEATURE_NAMES_PATH.exists():
+        names = json.loads(FEATURE_NAMES_PATH.read_text())
+        logger.info(f"Loaded {len(names)} feature names from {FEATURE_NAMES_PATH}")
+        return names
+    logger.warning(f"feature_names.json not found at {FEATURE_NAMES_PATH}; using defaults")
+    # Fallback — must match ALL_FEATURE_NAMES in features.py
+    numeric = [
+        "tenure_days", "txn_count_obs", "total_spend_obs", "avg_txn_amount_obs",
+        "days_since_last_txn", "txn_freq_monthly", "had_fraud_obs",
+        "signup_dow", "signup_month",
+    ]
+    ch = [f"channel_{c}" for c in CHANNEL_LEVELS]
+    pl = [f"plan_{p}" for p in PLAN_LEVELS]
+    return numeric + ch + pl
+
 
 # ── Prometheus metrics ───────────────────────────────────────────────────
 PREDICTION_COUNT = Counter(
@@ -78,15 +84,17 @@ REQUEST_SIZE = Histogram(
     "churn_request_size", "Batch request size"
 )
 
-# ── model loading ────────────────────────────────────────────────────────
+# ── model state ──────────────────────────────────────────────────────────
 _model: Optional[object] = None
 _model_loaded_at: Optional[datetime] = None
+_feature_names: list[str] = []
 _start_time = time.time()
 
 
 def load_model(model_path: Path = DEFAULT_MODEL_PATH) -> None:
     """Load the churn model artifact. Call once at startup."""
-    global _model, _model_loaded_at
+    global _model, _model_loaded_at, _feature_names
+    _feature_names = _load_feature_names()
     if not model_path.exists():
         logger.warning(f"Model not found at {model_path}; service starts in no-model mode")
         MODEL_LOADED.set(0)
@@ -125,7 +133,7 @@ async def metrics() -> Response:
     return Response(content=generate_latest(), media_type="text/plain")
 
 
-# ── health check ─────────────────────────────────────────────────────────
+# ── health / readiness ───────────────────────────────────────────────────
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(
@@ -148,43 +156,45 @@ async def readiness() -> JSONResponse:
 async def model_metadata() -> ModelMetadataResponse:
     return ModelMetadataResponse(
         model_version=MODEL_VERSION,
-        feature_names=FEATURE_NAMES,
+        feature_names=_feature_names,
         training_date="2025-07-01",
         n_users=0,
         churn_rate=0.0,
     )
 
 
-# ── helpers ──────────────────────────────────────────────────────────────
+# ── feature vector builder ───────────────────────────────────────────────
 def _build_feature_vector(req: PredictionRequest) -> np.ndarray:
-    """Convert a PredictionRequest into the feature vector expected by the model."""
-    # Numeric features
-    feats = [
-        req.tenure_days,
-        req.txn_count_obs,
-        req.total_spend_obs,
-        req.avg_txn_amount_obs,
-        req.days_since_last_txn,
-        req.txn_freq_monthly,
-        req.had_fraud_obs,
-        req.signup_dow,
-        req.signup_month,
+    """Convert a PredictionRequest into the feature vector expected by the model.
+
+    Uses the canonical feature name list (loaded from feature_names.json
+    or the fallback).  Column order is the list order — which must match
+    the order produced by build_training_set() in features.py.
+    """
+    # Numeric features in order
+    values: list[float] = [
+        float(req.tenure_days),
+        float(req.txn_count_obs),
+        float(req.total_spend_obs),
+        float(req.avg_txn_amount_obs),
+        float(req.days_since_last_txn),
+        float(req.txn_freq_monthly),
+        float(req.had_fraud_obs),
+        float(req.signup_dow),
+        float(req.signup_month),
     ]
-    # Categorical dummies (order must match training)
-    channel_dummies = {
-        "display": [1, 0, 0, 0, 0],
-        "organic": [0, 1, 0, 0, 0],
-        "search":  [0, 0, 1, 0, 0],
-        "social":  [0, 0, 0, 1, 0],
-        "video":   [0, 0, 0, 0, 1],
-    }
-    plan_dummies = {"basic": [0], "pro": [1]}
 
+    # Channel one-hot (5 levels, same order as CHANNEL_LEVELS)
     ch = req.channel.lower()
-    feats.extend(channel_dummies.get(ch, [0, 0, 0, 0, 0]))
-    feats.extend(plan_dummies.get(req.plan.lower(), [0]))
+    for level in CHANNEL_LEVELS:
+        values.append(1.0 if ch == level else 0.0)
 
-    return np.array(feats, dtype=np.float64).reshape(1, -1)
+    # Plan one-hot (2 levels)
+    pl = req.plan.lower()
+    for level in PLAN_LEVELS:
+        values.append(1.0 if pl == level else 0.0)
+
+    return np.array(values, dtype=np.float64).reshape(1, -1)
 
 
 def _predict_one(req: PredictionRequest) -> PredictionResponse:

@@ -100,7 +100,7 @@ class TestServingSchema:
             signup_month=3,
         )
         vec = _build_feature_vector(req)
-        assert vec.shape == (1, 15), f"Expected (1, 15), got {vec.shape}"
+        assert vec.shape[1] == 16, f"Expected 16 features, got {vec.shape[1]}"
 
     def test_prediction_request_validation(self) -> None:
         """Invalid requests should raise validation errors."""
@@ -174,3 +174,36 @@ class TestSealEnforcement:
             text = path.read_text()
             for token in FORBIDDEN:
                 assert token not in text, f"{path}: contains {token!r}"
+
+
+class TestEndToEndServing:
+    """End-to-end: train a model, load it into the serving stack, predict, verify."""
+
+    def test_train_then_predict(self, db_path: Path, tmp_path: Path) -> None:
+        import joblib
+        from growth_lab.churn.train import train_pipeline
+        from growth_lab.serve.app import _build_feature_vector
+
+        # 1. Train a model and save it
+        results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
+        model_path = tmp_path / "churn_model.joblib"
+        model_src = Path(__file__).resolve().parents[1] / "models" / "churn_model.joblib"
+        assert model_src.exists(), "Training should produce models/churn_model.joblib"
+        joblib.dump(joblib.load(model_src), model_path)
+
+        # 2. Load the model (simulating what serve/app.py does at startup)
+        model = joblib.load(model_path)
+
+        # 3. Build a feature vector and predict
+        req = PredictionRequest(
+            user_id=1, channel="search", plan="pro", tenure_days=120,
+            txn_count_obs=4, total_spend_obs=79.96, avg_txn_amount_obs=19.99,
+            days_since_last_txn=15, txn_freq_monthly=1.0, had_fraud_obs=0,
+            signup_dow=2, signup_month=3,
+        )
+        X = _build_feature_vector(req)
+        prob = model.predict_proba(X)[0, 1]
+
+        # 4. Verify output shape and range
+        assert 0.0 <= prob <= 1.0, f"Probability {prob} out of [0, 1]"
+        assert X.shape[1] == 16, f"Expected 16 features, got {X.shape[1]}"

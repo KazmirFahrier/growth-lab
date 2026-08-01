@@ -20,7 +20,6 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -182,7 +181,10 @@ def train_pipeline(
 
         # ── 7. Log and register best model ────────────────────────────────
         best_model = models[best_name]
-        mlflow.sklearn.log_model(best_model, "model", registered_model_name="churn-predictor")
+        if register_model:
+            mlflow.sklearn.log_model(best_model, "model", registered_model_name="churn-predictor")
+        else:
+            mlflow.sklearn.log_model(best_model, "model")
 
         # Save model artifact for serving
         MODEL_DIR.mkdir(parents=True, exist_ok=True)

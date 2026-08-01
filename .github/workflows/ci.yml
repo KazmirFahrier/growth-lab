@@ -27,15 +27,20 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    needs: integration
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
         run: docker build -t growth-lab .
-      - name: Smoke test (health check)
+      - name: Smoke test (readiness + prediction)
         run: |
           docker run -d --name growth-lab-test -p 8000:8000 growth-lab
           sleep 10
-          curl -f http://localhost:8000/health || (docker logs growth-lab-test && exit 1)
+          curl -f http://localhost:8000/ready || (docker logs growth-lab-test && exit 1)
+          curl -s -X POST http://localhost:8000/predict \
+            -H "Content-Type: application/json" \
+            -d '{"user_id":1,"channel":"search","plan":"pro","tenure_days":120,"txn_count_obs":4,"total_spend_obs":79.96,"avg_txn_amount_obs":19.99,"days_since_last_txn":15,"txn_freq_monthly":1.0,"had_fraud_obs":0,"signup_dow":2,"signup_month":3}' | python -c "import sys,json; d=json.load(sys.stdin); assert 'churn_probability' in d, 'Missing prediction field'"
           docker stop growth-lab-test
 
   integration:

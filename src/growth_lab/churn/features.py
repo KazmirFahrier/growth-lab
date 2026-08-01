@@ -8,10 +8,12 @@ Temporal split strategy:
   * Observation window: days [0, cutoff) from each user's signup
   * Prediction window: days [cutoff, cutoff + horizon) from signup
   * Label = 1 if zero transactions in the prediction window (= churned)
+  * Rows ordered by signup_date so a simple row split = temporal split.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,41 @@ import pandas as pd
 # Default temporal split: 120 days observation, 30-day churn horizon.
 DEFAULT_CUTOFF_DAYS = 120
 DEFAULT_HORIZON_DAYS = 30
+
+# Where the canonical feature list is saved (training) / loaded (serving).
+FEATURE_NAMES_PATH = Path(__file__).resolve().parents[3] / "models" / "feature_names.json"
+
+
+# ── ordered categorical levels (must match serving in serve/app.py) ──────
+CHANNEL_LEVELS = ["display", "organic", "search", "social", "video"]
+PLAN_LEVELS = ["basic", "pro"]
+
+NUMERIC_FEATURES = [
+    "tenure_days",
+    "txn_count_obs",
+    "total_spend_obs",
+    "avg_txn_amount_obs",
+    "days_since_last_txn",
+    "txn_freq_monthly",
+    "had_fraud_obs",
+    "signup_dow",
+    "signup_month",
+]
+
+
+def _categorical_dummy_names() -> list[str]:
+    """Return the full set of one-hot column names (no drop_first).
+
+    Must exactly match _build_feature_vector in serve/app.py."""
+    names: list[str] = []
+    for level in CHANNEL_LEVELS:
+        names.append(f"channel_{level}")
+    for level in PLAN_LEVELS:
+        names.append(f"plan_{level}")
+    return names
+
+
+ALL_FEATURE_NAMES: list[str] = NUMERIC_FEATURES + _categorical_dummy_names()
 
 
 @dataclass(frozen=True)
@@ -46,8 +83,8 @@ def build_training_set(
 
     For every subscribed user, computes features from the observation window
     [signup, signup + cutoff_days) and labels from [signup + cutoff_days,
-    signup + cutoff_days + horizon_days). Users with < cutoff_days of history
-    are excluded.
+    signup + cutoff_days + horizon_days). Users with insufficient history
+    are excluded. Rows are ordered by signup_date for temporal splitting.
     """
     con = duckdb.connect(str(db_path), read_only=True)
 
@@ -60,19 +97,23 @@ def build_training_set(
             s.signup_date,
             s.channel,
             s.plan,
-            DATE_DIFF('day', s.signup_date, DATE '2025-07-01') AS max_days
+            DATE_DIFF('day', s.signup_date, MAX(t.txn_date) OVER (PARTITION BY s.user_id))
+              AS max_txn_day
           FROM raw.signups s
+          LEFT JOIN raw.transactions t ON s.user_id = t.user_id
           WHERE s.subscribed = TRUE
             AND s.plan IS NOT NULL
         ),
         eligible AS (
-          SELECT *
+          SELECT user_id, signup_date, channel, plan
           FROM user_base
-          WHERE max_days >= {cutoff_days} + {horizon_days}
+          WHERE max_txn_day >= {cutoff_days} + {horizon_days}
+             OR max_txn_day IS NULL   -- keep users with no txns (they exist in signups)
         ),
         txn_window AS (
           SELECT
             e.user_id,
+            e.signup_date,
             t.txn_date,
             t.amount,
             t.is_fraud,
@@ -118,7 +159,6 @@ def build_training_set(
           e.channel,
           e.plan,
           e.signup_date,
-          DATE_DIFF('day', e.signup_date, DATE '2025-07-01') AS tenure_days,
           COALESCE(o.txn_count_obs, 0) AS txn_count_obs,
           o.total_spend_obs,
           o.avg_txn_amount_obs,
@@ -128,7 +168,7 @@ def build_training_set(
         FROM eligible e
         JOIN obs_features o ON e.user_id = o.user_id
         JOIN labels l ON e.user_id = l.user_id
-        ORDER BY e.user_id
+        ORDER BY e.signup_date, e.user_id
         """
         raw = con.execute(query).fetchdf()
     finally:
@@ -139,6 +179,9 @@ def build_training_set(
 
     # ── feature engineering (Python-side, post-SQL) ──────────────────────
     df = raw.copy()
+
+    # Tenure at the observation cutoff (not a hardcoded endpoint date).
+    df["tenure_days"] = cutoff_days
 
     # Recency: days since last transaction (capped at cutoff)
     df["days_since_last_txn"] = cutoff_days - df["last_txn_day_obs"].clip(0)
@@ -152,37 +195,33 @@ def build_training_set(
     df["signup_dow"] = df["signup_date"].dt.dayofweek
     df["signup_month"] = df["signup_date"].dt.month
 
-    # ── categorical encoding ─────────────────────────────────────────────
-    categorical_cols: list[str] = []
-    for col in ["channel", "plan"]:
-        dummies = pd.get_dummies(df[col], prefix=col, drop_first=True)
-        for c in dummies.columns:
-            df[c] = dummies[c].astype(int)
-            categorical_cols.append(c)
+    # ── categorical encoding (FULL one-hot, no drop_first) ───────────────
+    ch_dummies = pd.get_dummies(
+        pd.Categorical(df["channel"], categories=CHANNEL_LEVELS),
+        prefix="channel",
+        dtype=int,
+    )
+    plan_dummies = pd.get_dummies(
+        pd.Categorical(df["plan"], categories=PLAN_LEVELS),
+        prefix="plan",
+        dtype=int,
+    )
+    df = pd.concat([df, ch_dummies, plan_dummies], axis=1)
 
     # ── final feature matrix ─────────────────────────────────────────────
-    numeric_features = [
-        "tenure_days",
-        "txn_count_obs",
-        "total_spend_obs",
-        "avg_txn_amount_obs",
-        "days_since_last_txn",
-        "txn_freq_monthly",
-        "had_fraud_obs",
-        "signup_dow",
-        "signup_month",
-    ]
-    feature_names = numeric_features + categorical_cols
-
-    X = df[feature_names].copy()
+    X = df[ALL_FEATURE_NAMES].copy()
     y = df["churned"].to_numpy(dtype=np.int64)
 
     churn_rate = float(y.mean())
 
+    # ── persist canonical feature list for serving ───────────────────────
+    FEATURE_NAMES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FEATURE_NAMES_PATH.write_text(json.dumps(ALL_FEATURE_NAMES, indent=2))
+
     return TrainingSet(
         X=X,
         y=y,
-        feature_names=feature_names,
+        feature_names=ALL_FEATURE_NAMES,
         cutoff_days=cutoff_days,
         horizon_days=horizon_days,
         n_users=len(df),
