@@ -62,3 +62,9 @@ class ModelMetadataResponse(BaseModel):
     churn_rate: float
     best_model: str
     best_test_auc: float
+    final_test_auc: float
+    selection_method: str
+    selection_metric: str
+    selection_folds: int
+    selection_cv_mean_auc: float
+    selection_cv_std_auc: float

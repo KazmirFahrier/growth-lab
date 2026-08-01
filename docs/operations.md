@@ -88,6 +88,10 @@ artifact, churn model, feature contract, and model card are release assets.
 Build them once per release. Publish their checksums beside the image digest.
 Keep the prior release assets until the new release passes its smoke test.
 
+The churn model card records candidate scores from temporal cross validation,
+the selected candidate, and that candidate's final holdout metrics. The final
+holdout is evaluated once and is never used to choose the candidate.
+
 The API opens DuckDB in read only mode for each request. Replace the database
 through an atomic deployment or immutable image update. Never modify the live
 file in place.

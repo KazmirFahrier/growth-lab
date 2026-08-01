@@ -58,6 +58,20 @@ def artifacts(tmp_path: Path) -> tuple[Path, Path, Path]:
                 "churn_rate": 0.5,
                 "best_model": "logistic",
                 "best_test_auc": 1.0,
+                "final_test_auc": 1.0,
+                "selection_method": "temporal_cross_validation",
+                "selection_metric": "roc_auc",
+                "selection_folds": 3,
+                "selection_cv_mean_auc": 0.9,
+                "selection_cv_std_auc": 0.04082482904638629,
+                "candidate_cv_auc": {
+                    "logistic": {
+                        "mean": 0.9,
+                        "std": 0.04082482904638629,
+                        "fold_scores": [0.85, 0.9, 0.95],
+                    }
+                },
+                "test_metrics": {"logistic_roc_auc": 1.0},
                 "model_sha256": model_sha256,
                 "feature_names": ALL_FEATURE_NAMES,
             }
@@ -104,6 +118,9 @@ def test_model_metadata_and_metrics_are_protected(client: TestClient) -> None:
     metadata = client.get("/model", headers={"X-API-Key": API_KEY})
     assert metadata.status_code == 200
     assert metadata.json()["feature_names"] == ALL_FEATURE_NAMES
+    assert metadata.json()["selection_method"] == "temporal_cross_validation"
+    assert metadata.json()["selection_cv_mean_auc"] == 0.9
+    assert metadata.json()["final_test_auc"] == 1.0
     metrics = client.get("/metrics", headers={"X-API-Key": API_KEY})
     assert metrics.status_code == 200
     assert "churn_predictions_total" in metrics.text
@@ -125,6 +142,20 @@ def test_tampered_model_fails_before_deserialization(
     artifacts: tuple[Path, Path, Path],
 ) -> None:
     artifacts[0].write_bytes(artifacts[0].read_bytes() + b"tampered")
+    app = create_app(
+        Settings(environment="test"),
+        model_path=artifacts[0],
+        feature_names_path=artifacts[1],
+        model_card_path=artifacts[2],
+    )
+    with TestClient(app) as local:
+        assert local.get("/ready").status_code == 503
+
+
+def test_model_card_requires_selection_evidence(artifacts: tuple[Path, Path, Path]) -> None:
+    card = json.loads(artifacts[2].read_text())
+    del card["candidate_cv_auc"]
+    artifacts[2].write_text(json.dumps(card))
     app = create_app(
         Settings(environment="test"),
         model_path=artifacts[0],

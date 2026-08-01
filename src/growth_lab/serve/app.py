@@ -80,6 +80,15 @@ def _load_json(path: Path) -> Any:
         raise ValueError(f"invalid artifact at {path}") from error
 
 
+def _is_unit_interval_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and bool(np.isfinite(value))
+        and 0.0 <= float(value) <= 1.0
+    )
+
+
 def _validate_model_card(value: Any, feature_names: list[str]) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("feature_names") != feature_names:
         raise ValueError("model card does not match the feature contract")
@@ -90,7 +99,15 @@ def _validate_model_card(value: Any, feature_names: list[str]) -> dict[str, Any]
     n_users = value.get("n_users")
     churn_rate = value.get("churn_rate")
     best_auc = value.get("best_test_auc")
+    final_test_auc = value.get("final_test_auc")
     best_model = value.get("best_model")
+    selection_method = value.get("selection_method")
+    selection_metric = value.get("selection_metric")
+    selection_folds = value.get("selection_folds")
+    selection_mean = value.get("selection_cv_mean_auc")
+    selection_std = value.get("selection_cv_std_auc")
+    candidate_scores = value.get("candidate_cv_auc")
+    test_metrics = value.get("test_metrics")
     model_sha256 = value.get("model_sha256")
     if not isinstance(n_users, int) or n_users < 1:
         raise ValueError("model card has an invalid user count")
@@ -102,8 +119,58 @@ def _validate_model_card(value: Any, feature_names: list[str]) -> dict[str, Any]
         raise ValueError("model card has an invalid test AUC")
     if not 0.0 <= float(best_auc) <= 1.0:
         raise ValueError("model card has an invalid test AUC")
+    if not _is_unit_interval_number(final_test_auc) or not np.isclose(
+        float(best_auc), float(cast(float, final_test_auc))
+    ):
+        raise ValueError("model card has inconsistent final test AUC")
     if not isinstance(best_model, str) or not best_model:
         raise ValueError("model card has no selected model")
+    if selection_method != "temporal_cross_validation" or selection_metric != "roc_auc":
+        raise ValueError("model card has an invalid selection method")
+    if not isinstance(selection_folds, int) or selection_folds < 2:
+        raise ValueError("model card has too few temporal validation folds")
+    if not _is_unit_interval_number(selection_mean):
+        raise ValueError("model card has an invalid selection mean")
+    if not _is_unit_interval_number(selection_std):
+        raise ValueError("model card has an invalid selection standard deviation")
+    if not isinstance(candidate_scores, dict) or best_model not in candidate_scores:
+        raise ValueError("model card has no candidate selection evidence")
+    for candidate_name, summary in candidate_scores.items():
+        if not isinstance(candidate_name, str) or not isinstance(summary, dict):
+            raise ValueError("model card has invalid candidate selection evidence")
+        mean = summary.get("mean")
+        std = summary.get("std")
+        fold_scores = summary.get("fold_scores")
+        if not _is_unit_interval_number(mean) or not _is_unit_interval_number(std):
+            raise ValueError("model card has invalid candidate selection evidence")
+        if not isinstance(fold_scores, list) or len(fold_scores) != selection_folds:
+            raise ValueError("model card has invalid candidate fold evidence")
+        if not all(_is_unit_interval_number(score) for score in fold_scores):
+            raise ValueError("model card has invalid candidate fold evidence")
+        numeric_fold_scores = [float(score) for score in fold_scores]
+        if not np.isclose(
+            float(cast(float, mean)), float(np.mean(numeric_fold_scores))
+        ) or not np.isclose(
+            float(cast(float, std)), float(np.std(numeric_fold_scores))
+        ):
+            raise ValueError("model card candidate summary does not match its folds")
+    selected_scores = candidate_scores[best_model]
+    selected_mean = selected_scores["mean"]
+    selected_std = selected_scores["std"]
+    if not np.isclose(float(selected_mean), float(cast(float, selection_mean))) or not np.isclose(
+        float(selected_std), float(cast(float, selection_std))
+    ):
+        raise ValueError("model card selection evidence is inconsistent")
+    highest_mean = max(float(summary["mean"]) for summary in candidate_scores.values())
+    if not np.isclose(float(selected_mean), highest_mean):
+        raise ValueError("model card selected candidate is not the validation champion")
+    selected_auc_key = f"{best_model}_roc_auc"
+    if not isinstance(test_metrics, dict) or not _is_unit_interval_number(
+        test_metrics.get(selected_auc_key)
+    ):
+        raise ValueError("model card has no final test metrics for the selected model")
+    if not np.isclose(float(test_metrics[selected_auc_key]), float(cast(float, final_test_auc))):
+        raise ValueError("model card final test evidence is inconsistent")
     if (
         not isinstance(model_sha256, str)
         or len(model_sha256) != 64
@@ -308,6 +375,12 @@ def create_app(
             churn_rate=float(state.model_card.get("churn_rate", 0.0)),
             best_model=str(state.model_card.get("best_model", "unknown")),
             best_test_auc=float(state.model_card.get("best_test_auc", 0.0)),
+            final_test_auc=float(state.model_card.get("final_test_auc", 0.0)),
+            selection_method=str(state.model_card.get("selection_method", "unknown")),
+            selection_metric=str(state.model_card.get("selection_metric", "unknown")),
+            selection_folds=int(state.model_card.get("selection_folds", 0)),
+            selection_cv_mean_auc=float(state.model_card.get("selection_cv_mean_auc", 0.0)),
+            selection_cv_std_auc=float(state.model_card.get("selection_cv_std_auc", 0.0)),
         )
 
     @app.post("/predict", response_model=PredictionResponse)

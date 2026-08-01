@@ -189,8 +189,10 @@ curl -H "X-API-Key: $GROWTH_LAB_API_KEY" http://127.0.0.1:8001/model
 Both images run as an unprivileged user with a read only filesystem, all Linux
 capabilities removed, a process limit, and explicit CPU and memory limits. The
 churn image contains a versioned model built from the sealed warehouse with a
-temporal observation and prediction split. Prediction, model metadata, and
-metrics routes require the same API key as the analytics service.
+temporal observation and prediction split. Candidate models are selected using
+temporal cross validation within the development period. Only that selected
+model is then evaluated on the untouched final holdout. Prediction, model
+metadata, and metrics routes require the same API key as the analytics service.
 See [`docs/operations.md`](docs/operations.md) for configuration, deployment,
 monitoring, rollback, and incident procedures.
 
