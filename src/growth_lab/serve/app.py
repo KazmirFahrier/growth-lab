@@ -17,8 +17,6 @@ import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-
 import joblib
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -85,8 +83,8 @@ REQUEST_SIZE = Histogram(
 )
 
 # ── model state ──────────────────────────────────────────────────────────
-_model: Optional[object] = None
-_model_loaded_at: Optional[datetime] = None
+_model: object | None = None
+_model_loaded_at: datetime | None = None
 _feature_names: list[str] = []
 _start_time = time.time()
 

@@ -67,7 +67,10 @@ class HealthMonitor:
     def latency_report(self) -> LatencyReport:
         now = datetime.now(timezone.utc)
         if not self._latencies:
-            return LatencyReport(checked_at=now, p50_ms=0, p95_ms=0, p99_ms=0, n_requests=0, error_rate=0.0)
+            return LatencyReport(
+                checked_at=now,
+                p50_ms=0, p95_ms=0, p99_ms=0, n_requests=0, error_rate=0.0,
+            )
         arr = sorted(self._latencies)
         n = len(arr)
         return LatencyReport(

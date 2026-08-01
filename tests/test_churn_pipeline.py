@@ -78,7 +78,7 @@ class TestFeatureEngineering:
 class TestTrainingPipeline:
     def test_train_pipeline_runs(self, db_path: Path) -> None:
         _results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
-        card = results.get("model_card", {})
+        card = _results.get("model_card", {})
         assert "best_model" in card
         assert card.get("best_test_auc", 0) > 0
 
