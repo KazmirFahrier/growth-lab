@@ -150,9 +150,7 @@ def _validate_model_card(value: Any, feature_names: list[str]) -> dict[str, Any]
         numeric_fold_scores = [float(score) for score in fold_scores]
         if not np.isclose(
             float(cast(float, mean)), float(np.mean(numeric_fold_scores))
-        ) or not np.isclose(
-            float(cast(float, std)), float(np.std(numeric_fold_scores))
-        ):
+        ) or not np.isclose(float(cast(float, std)), float(np.std(numeric_fold_scores))):
             raise ValueError("model card candidate summary does not match its folds")
     selected_scores = candidate_scores[best_model]
     selected_mean = selected_scores["mean"]

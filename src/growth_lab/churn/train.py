@@ -160,9 +160,7 @@ def train_pipeline(
     candidate_cv_mean = {
         name: float(np.mean(scores)) for name, scores in candidate_cv_scores.items()
     }
-    candidate_cv_std = {
-        name: float(np.std(scores)) for name, scores in candidate_cv_scores.items()
-    }
+    candidate_cv_std = {name: float(np.std(scores)) for name, scores in candidate_cv_scores.items()}
     valid_cv_folds = len(candidate_cv_scores[selected_name])
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -187,14 +185,8 @@ def train_pipeline(
             }
         )
         mlflow.log_metrics(
-            {
-                f"{name}_cv_roc_auc_mean": mean_auc
-                for name, mean_auc in candidate_cv_mean.items()
-            }
-            | {
-                f"{name}_cv_roc_auc_std": candidate_cv_std[name]
-                for name in candidate_cv_mean
-            }
+            {f"{name}_cv_roc_auc_mean": mean_auc for name, mean_auc in candidate_cv_mean.items()}
+            | {f"{name}_cv_roc_auc_std": candidate_cv_std[name] for name in candidate_cv_mean}
         )
         mlflow.log_dict(ts.feature_names, "feature_names.json")
 
