@@ -1,8 +1,8 @@
 # Growth Lab operations
 
-## Service contract
+## Service contracts
 
-The production API is read only. It serves governed business metrics,
+The analytics API is read only. It serves governed business metrics,
 revenue forecasts, and MMM budget recommendations. It does not expose the
 sealed simulator truth, arbitrary SQL, database mutation, model fitting, or
 warehouse build commands.
@@ -16,6 +16,18 @@ warehouse build commands.
 | `POST /v1/forecast` | Revenue forecast | API key |
 | `POST /v1/budget` | MMM budget allocation | API key |
 
+The churn API serves a model artifact built from a leakage safe temporal
+training set.
+
+| Route | Purpose | Authentication |
+|---|---|---|
+| `GET /health` | Process liveness | None |
+| `GET /ready` | Model bundle readiness | None |
+| `GET /metrics` | Prometheus telemetry | API key |
+| `GET /model` | Model and training metadata | API key |
+| `POST /predict` | One churn prediction | API key |
+| `POST /predict/batch` | Up to one thousand predictions | API key |
+
 Production mode disables interactive API documentation and refuses to start
 unless `GROWTH_LAB_API_KEY` contains at least thirty two characters.
 
@@ -27,6 +39,9 @@ unless `GROWTH_LAB_API_KEY` contains at least thirty two characters.
 | `GROWTH_LAB_API_KEY` | unset | Shared secret supplied through `X-API-Key`. |
 | `GROWTH_LAB_DB` | `data/growth_lab.duckdb` | Read only warehouse path. |
 | `GROWTH_LAB_MMM_PARAMS` | `models/mmm.json` | Validated MMM parameter artifact. |
+| `GROWTH_LAB_CHURN_MODEL` | `models/churn_model.joblib` | Churn model artifact. |
+| `GROWTH_LAB_FEATURE_NAMES` | `models/feature_names.json` | Ordered serving contract. |
+| `GROWTH_LAB_MODEL_CARD` | `models/model_card.json` | Training metadata and evaluation results. |
 | `GROWTH_LAB_MAX_REQUEST_BYTES` | `1048576` | Maximum declared request size. |
 | `GROWTH_LAB_LOG_LEVEL` | `INFO` | JSON log severity threshold. |
 
@@ -35,7 +50,7 @@ the image, Compose file, repository, or command history.
 
 ## Deployment
 
-1. Build the image from a reviewed commit.
+1. Build both image targets from a reviewed commit.
 
 2. Record the commit SHA and image digest in the release record.
 
@@ -44,7 +59,8 @@ the image, Compose file, repository, or command history.
 4. Run the container as user `10001` with a read only root filesystem. Drop
    all capabilities and enable the no new privileges control.
 
-5. Wait for `/readyz` to return HTTP `200` before routing traffic.
+5. Wait for analytics `/readyz` and churn `/ready` to return HTTP `200`
+   before routing traffic.
 
 6. Send a metrics query with a known channel filter and confirm that the
    response contains a request ID.
@@ -59,16 +75,18 @@ Collect JSON logs from standard error. Preserve `request_id`, `route`,
 `status`, and `elapsed_ms` fields. Scrape `/metrics` with the API key and alert
 on sustained HTTP `500` responses, readiness failures, and latency changes.
 
-Readiness requires both the DuckDB warehouse and MMM artifact. Liveness only
-states that the process can respond. Do not restart a healthy process to fix a
-readiness failure before checking mounted artifacts and permissions.
+Analytics readiness requires both the DuckDB warehouse and MMM artifact.
+Churn readiness requires a model, feature contract, and model card that agree.
+The service verifies the model checksum from the card before deserialization.
+Liveness only states that the process can respond. Do not restart a healthy
+process to fix a readiness failure before checking artifacts and permissions.
 
 ## Data and artifact lifecycle
 
-The checked in simulator is deterministic, but the deployed DuckDB file and
-MMM artifact are release assets. Build them once per release. Publish their
-checksums beside the image digest. Keep the prior release assets until the new
-release passes its smoke test.
+The checked in simulator is deterministic, but the deployed DuckDB file, MMM
+artifact, churn model, feature contract, and model card are release assets.
+Build them once per release. Publish their checksums beside the image digest.
+Keep the prior release assets until the new release passes its smoke test.
 
 The API opens DuckDB in read only mode for each request. Replace the database
 through an atomic deployment or immutable image update. Never modify the live
@@ -82,7 +100,7 @@ file in place.
 
 3. Rotate the API key immediately if disclosure is suspected.
 
-4. Roll back the image and its paired data artifacts together.
+4. Roll back each image and its paired data or model artifacts together.
 
 5. Preserve logs, image digest, commit SHA, database checksum, and MMM artifact
    checksum for analysis.

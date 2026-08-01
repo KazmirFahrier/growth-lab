@@ -34,7 +34,9 @@ def test_ci_validates_source_package_and_container() -> None:
     assert "actions/setup-python@v6" in workflow
     assert "ruff format --check ." in workflow
     assert "python -m build --wheel" in workflow
-    assert "docker/build-push-action@v7" in workflow
+    assert "docker build --target analytics" in workflow
+    assert "docker build --target churn" in workflow
+    assert "Smoke test both services" in workflow
 
 
 def test_example_environment_does_not_contain_a_usable_key() -> None:

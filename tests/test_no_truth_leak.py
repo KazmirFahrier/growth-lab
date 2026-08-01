@@ -1,8 +1,4 @@
-"""The seal on truth.yaml: estimator- and warehouse-facing code must never
-read the ground truth. Only the simulator (it IS the DGP) and tests may.
-
-This is enforced structurally, not by convention.
-"""
+"""Structural seal preventing production code from reading simulator truth."""
 
 from __future__ import annotations
 
@@ -10,8 +6,6 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "growth_lab"
 FORBIDDEN_COMMON = ("load_truth", "truth.yaml", "simulator.params", "users_latent", "sim_hidden")
-# Estimator packages must not import the simulator at all; the warehouse may
-# land simulator *output* (ingestion) but never its parameters or latents.
 SEALED_PACKAGES: dict[str, tuple[str, ...]] = {
     "warehouse": FORBIDDEN_COMMON,
     "experiments": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
@@ -21,16 +15,19 @@ SEALED_PACKAGES: dict[str, tuple[str, ...]] = {
     "risk": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
     "reporting": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
     "integrations": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
+    "service": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
+    "churn": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
+    "serve": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
+    "monitor": (*FORBIDDEN_COMMON, "growth_lab.simulator"),
 }
 
 
 def test_sealed_package_list_is_current() -> None:
-    """Every estimator/delivery package on disk must be in the seal list —
-    a new package cannot silently opt out of the audit."""
+    """A new production package cannot silently opt out of the audit."""
     on_disk = {
-        p.name
-        for p in SRC.iterdir()
-        if p.is_dir() and (p / "__init__.py").exists() and p.name != "simulator"
+        path.name
+        for path in SRC.iterdir()
+        if path.is_dir() and (path / "__init__.py").exists() and path.name != "simulator"
     }
     assert on_disk == set(SEALED_PACKAGES), (
         f"packages missing from seal audit: {on_disk ^ set(SEALED_PACKAGES)}"

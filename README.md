@@ -139,7 +139,10 @@ src/growth_lab/
   risk/                   anomaly detection, calibration, drift (PSI)
   reporting/              Figure provenance, growth review (md + pptx)
   integrations/           agent tool bridge (campaign-copilot contract)
-  service/                authenticated API, health, readiness, telemetry
+  service/                authenticated analytics API
+  churn/                  leakage safe churn feature and training pipeline
+  serve/                  authenticated churn prediction API
+  monitor/                drift, calibration, latency, and freshness checks
 dashboard/                Streamlit app (optional extra: pip install -e ".[dashboard]")
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
@@ -154,7 +157,7 @@ never reads it.
 ## Quickstart
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,service,ml]"
 python -m growth_lab build          # simulate → DuckDB → dbt → metric summary
 python -m growth_lab causal-report  # naive vs causal vs truth table
 python -m growth_lab weekly-review  # provenance-tracked memo (md + pptx)
@@ -165,8 +168,7 @@ ruff check . && mypy               # style + strict types
 
 ## Production service
 
-The production boundary exposes governed metrics, forecasting, and budget
-planning through an authenticated FastAPI service. Raw SQL is never accepted
+Two production boundaries expose governed analytics and churn predictions through authenticated FastAPI services. The analytics API provides metrics, forecasting, and budget planning. Raw SQL is never accepted
 from clients. Metric filters are typed and bound as DuckDB parameters. The
 runtime also provides correlation IDs, structured JSON logs, health and
 readiness probes, bounded request bodies, security headers, and Prometheus
@@ -179,11 +181,16 @@ container profile:
 export GROWTH_LAB_API_KEY="$(openssl rand -hex 32)"
 docker compose up --build
 curl http://127.0.0.1:8000/readyz
+curl http://127.0.0.1:8001/ready
 curl -H "X-API-Key: $GROWTH_LAB_API_KEY" http://127.0.0.1:8000/metrics
+curl -H "X-API-Key: $GROWTH_LAB_API_KEY" http://127.0.0.1:8001/model
 ```
 
-The image runs as an unprivileged user with a read only filesystem, all Linux
-capabilities removed, a process limit, and explicit CPU and memory limits.
+Both images run as an unprivileged user with a read only filesystem, all Linux
+capabilities removed, a process limit, and explicit CPU and memory limits. The
+churn image contains a versioned model built from the sealed warehouse with a
+temporal observation and prediction split. Prediction, model metadata, and
+metrics routes require the same API key as the analytics service.
 See [`docs/operations.md`](docs/operations.md) for configuration, deployment,
 monitoring, rollback, and incident procedures.
 

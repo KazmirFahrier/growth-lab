@@ -15,27 +15,29 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install (pinned via constraints for reproducible CI)
-        run: pip install -e ".[dev,service]" -c constraints.txt
+      - name: Install pinned development dependencies
+        run: pip install -e ".[dev,service,ml]" -c constraints.txt
       - name: Lint
         run: ruff check .
       - name: Format
         run: ruff format --check .
       - name: Types
         run: mypy
-      - name: Tests (includes calibration gate + dbt build)
-        run: pytest
+      - name: Tests with coverage and truth seal
+        env:
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: pytest --cov=growth_lab --cov-report=term --cov-fail-under=65
 
   package:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -49,18 +51,33 @@ jobs:
       - name: Verify wheel in a clean environment
         run: |
           python -m venv /tmp/growth-lab-wheel
-          /tmp/growth-lab-wheel/bin/pip install "$(printf '%s' dist/*.whl)[service]" -c constraints.txt
+          /tmp/growth-lab-wheel/bin/pip install "$(printf '%s' dist/*.whl)[service,ml]" -c constraints.txt
           cd /tmp
-          /tmp/growth-lab-wheel/bin/python -c "import growth_lab; import growth_lab.service; assert growth_lab.__version__ == '1.0.0'"
+          /tmp/growth-lab-wheel/bin/python -c "import growth_lab; import growth_lab.service; import growth_lab.serve; assert growth_lab.__version__ == '1.0.0'"
 
-  container:
+  containers:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: false
-          tags: growth-lab:ci
+      - name: Build analytics image
+        run: docker build --target analytics --tag growth-lab-analytics:ci .
+      - name: Build churn image
+        run: docker build --target churn --tag growth-lab-churn:ci .
+      - name: Smoke test both services
+        env:
+          API_KEY: ci-only-api-key-with-at-least-32-chars
+        run: |
+          docker run -d --name analytics -e GROWTH_LAB_API_KEY="$API_KEY" -p 8000:8000 growth-lab-analytics:ci
+          docker run -d --name churn -e GROWTH_LAB_API_KEY="$API_KEY" -p 8001:8000 growth-lab-churn:ci
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/readyz && curl -fsS http://127.0.0.1:8001/ready && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/readyz
+          curl -fsS http://127.0.0.1:8001/ready
+          curl -fsS -X POST http://127.0.0.1:8001/predict \
+            -H "X-API-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"user_id":1,"channel":"search","plan":"pro","tenure_days":120,"txn_count_obs":4,"total_spend_obs":79.96,"avg_txn_amount_obs":19.99,"days_since_last_txn":15,"txn_freq_monthly":1.0,"had_fraud_obs":0,"signup_dow":2,"signup_month":3}' \
+            | python -c "import json,sys; assert 0 <= json.load(sys.stdin)['churn_probability'] <= 1"
