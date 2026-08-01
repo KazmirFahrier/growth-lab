@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import numpy as np
-from typing import Optional
 import pandas as pd
 
 

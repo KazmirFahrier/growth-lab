@@ -7,7 +7,7 @@ from the /metrics Prometheus endpoint or from a scheduled monitoring job.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 

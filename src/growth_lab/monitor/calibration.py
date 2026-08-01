@@ -75,7 +75,8 @@ class CalibrationMonitor:
             bins=bins_data,
             is_calibrated=ece <= self._ece_threshold,
             warning=(
-                "" if ece <= self._ece_threshold else f"ECE {ece:.4f} exceeds threshold {self._ece_threshold}"
+                "" if ece <= self._ece_threshold
+                else f"ECE {ece:.4f} exceeds threshold {self._ece_threshold}"  # noqa: E501
             ),
         )
 
