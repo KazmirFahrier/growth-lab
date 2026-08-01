@@ -6,9 +6,13 @@ All tests are self-contained and deterministic (fixed seed).
 
 from __future__ import annotations
 
+import json
 import tempfile
+from collections.abc import Iterator
+from datetime import datetime, timezone
 from pathlib import Path
 
+import duckdb
 import numpy as np
 import pandas as pd
 import pytest
@@ -23,7 +27,7 @@ from growth_lab.warehouse.load import build_all
 
 
 @pytest.fixture(scope="module")
-def db_path() -> Path:
+def db_path() -> Iterator[Path]:
     """Build a warehouse once for all churn tests."""
     truth = load_truth()
     sim = simulate(truth, seed=42)
@@ -79,8 +83,10 @@ class TestTrainingPipeline:
     def test_train_pipeline_runs(self, db_path: Path) -> None:
         _results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
         card = _results.get("model_card", {})
+        assert isinstance(card, dict)
         assert "best_model" in card
         assert card.get("best_test_auc", 0) > 0
+        json.dumps(card, default=str)
 
 
 class TestServingSchema:
@@ -106,9 +112,18 @@ class TestServingSchema:
         """Invalid requests should raise validation errors."""
         with pytest.raises(ValueError):
             PredictionRequest(
-                user_id=1, channel="search", plan="pro", tenure_days=-1, txn_count_obs=0,
-                total_spend_obs=0, avg_txn_amount_obs=0, days_since_last_txn=0,
-                txn_freq_monthly=0, had_fraud_obs=0, signup_dow=0, signup_month=1,
+                user_id=1,
+                channel="search",
+                plan="pro",
+                tenure_days=-1,
+                txn_count_obs=0,
+                total_spend_obs=0,
+                avg_txn_amount_obs=0,
+                days_since_last_txn=0,
+                txn_freq_monthly=0,
+                had_fraud_obs=0,
+                signup_dow=0,
+                signup_month=1,
             )
 
 
@@ -116,8 +131,9 @@ class TestMonitoring:
     def test_drift_monitor(self) -> None:
         from growth_lab.monitor.drift import DriftMonitor
 
-        ref = pd.DataFrame({"a": np.random.normal(0, 1, 100), "b": np.random.normal(5, 2, 100)})
-        cur = pd.DataFrame({"a": np.random.normal(0, 1, 100), "b": np.random.normal(5, 2, 100)})
+        rng = np.random.default_rng(42)
+        ref = pd.DataFrame({"a": rng.normal(0, 1, 100), "b": rng.normal(5, 2, 100)})
+        cur = pd.DataFrame({"a": rng.normal(0, 1, 100), "b": rng.normal(5, 2, 100)})
         monitor = DriftMonitor()
         monitor.set_reference(ref)
         report = monitor.check(cur)
@@ -135,6 +151,9 @@ class TestMonitoring:
         assert report.ece >= 0.0
         assert report.n_samples == 30
 
+        with pytest.raises(ValueError, match="equal length"):
+            monitor.check(y_prob, y_true[:-1])
+
     def test_health_monitor(self) -> None:
         from growth_lab.monitor.health import HealthMonitor
 
@@ -147,6 +166,31 @@ class TestMonitoring:
         assert lat.error_rate > 0.0
         thr = monitor.throughput_report()
         assert thr.total_requests == 3
+
+    def test_data_freshness_uses_warehouse_time(self, tmp_path: Path) -> None:
+        from growth_lab.monitor.health import HealthMonitor
+
+        db_path = tmp_path / "freshness.duckdb"
+        con = duckdb.connect(str(db_path))
+        try:
+            con.execute("CREATE SCHEMA raw")
+            con.execute("CREATE TABLE raw.transactions AS SELECT DATE '2026-01-02' AS txn_date")
+            con.execute("CREATE TABLE raw.signups AS SELECT DATE '2026-01-01' AS signup_date")
+        finally:
+            con.close()
+
+        monitor = HealthMonitor()
+        fresh = monitor.data_freshness(
+            db_path,
+            reference_time=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        )
+        assert fresh.is_fresh
+        assert fresh.freshness_hours == 24.0
+        stale = monitor.data_freshness(
+            db_path,
+            reference_time=datetime(2026, 1, 5, tzinfo=timezone.utc),
+        )
+        assert not stale.is_fresh
 
 
 class TestSealEnforcement:
@@ -197,10 +241,18 @@ class TestEndToEndServing:
 
         # 3. Build a feature vector and predict
         req = PredictionRequest(
-            user_id=1, channel="search", plan="pro", tenure_days=120,
-            txn_count_obs=4, total_spend_obs=79.96, avg_txn_amount_obs=19.99,
-            days_since_last_txn=15, txn_freq_monthly=1.0, had_fraud_obs=0,
-            signup_dow=2, signup_month=3,
+            user_id=1,
+            channel="search",
+            plan="pro",
+            tenure_days=120,
+            txn_count_obs=4,
+            total_spend_obs=79.96,
+            avg_txn_amount_obs=19.99,
+            days_since_last_txn=15,
+            txn_freq_monthly=1.0,
+            had_fraud_obs=0,
+            signup_dow=2,
+            signup_month=3,
         )
         X = _build_feature_vector(req)
         prob = model.predict_proba(X)[0, 1]

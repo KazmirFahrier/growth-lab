@@ -9,7 +9,7 @@ causal estimates, marketing measurement, and forecasts (Phases 1–5) are scored
 against parameters the estimators are structurally barred from reading —
 `tests/test_no_truth_leak.py` enforces the seal.
 
-Companion project: [campaign-copilot](../campaign-copilot) — the AI-agent side
+Companion project: [campaign-copilot](https://github.com/KazmirFahrier/campaign-copilot) — the AI-agent side
 of the same domain. campaign-copilot answers *"can an agent answer marketing
 questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 
@@ -19,11 +19,11 @@ questions safely?"*; growth-lab answers *"can we measure what actually works?"*
 |---|---|---|
 | 0 | Simulator + DuckDB/dbt warehouse + semantic layer | ✅ |
 | 1 | Experimentation platform (power, SRM, sequential, CUPED) | ✅ |
-| 2 | Observational causal inference (DiD, RDD, PSM/IPW, IV, uplift) | planned |
-| 3 | Marketing measurement (Bayesian MMM, attribution vs. incrementality, LTV) | planned |
-| 4 | Forecasting, anomaly detection, risk & calibration | planned |
-| 5 | Decision delivery (dashboard + auto-generated growth review) | planned |
-| 6 | Integration with campaign-copilot + audit | planned |
+| 2 | Observational causal inference (DiD, RDD, IPW, IV, uplift) | ✅ |
+| 3 | Marketing measurement (MMM, attribution vs. incrementality, LTV, budget) | ✅ |
+| 4 | Forecasting, anomaly detection, risk & calibration | ✅ |
+| 5 | Decision delivery (dashboard + provenance-tracked growth review) | ✅ |
+| 6 | campaign-copilot bridge + audit-as-code | ✅ |
 
 ## Design
 
@@ -41,6 +41,78 @@ is wrong, everything downstream is meaningless — so it crashes, loudly.
 **Metrics are ratio-of-sums by construction.** The semantic layer
 (`warehouse/semantic.py`) stores aggregate SQL expressions only; averaging
 daily ratios is unrepresentable. Unknown metrics raise, they don't default.
+
+**Causal estimators must refuse broken data.** `causal/` implements DiD,
+sharp RDD, IPW, 2SLS, and a T-learner from first principles (the only deps
+are numpy and pandas), each behind a mandatory diagnostic: parallel-trends
+placebo, density continuity at the cutoff, overlap and post-weighting
+balance, first-stage F. When an assumption fails, the estimator raises
+`AssumptionViolation` instead of returning a number. The recovery gate in
+`tests/test_causal_recovery.py` requires all three legs per scenario: the
+naive answer is provably biased, the causal answer lands on the sealed
+truth, and the assumption-violating variant is refused. See it yourself:
+
+```
+$ python -m growth_lab causal-report
+scenario         method         naive    causal     truth
+---------------------------------------------------------
+geo rollout      DiD          +0.0256   +0.0081   +0.0080
+spend threshold  sharp RDD    +0.6856   +0.1689   +0.1500
+promo email      IPW          +0.1894   +0.0440   +0.0600
+price change     2SLS         +1.3184   -0.4022   -0.4000
+```
+
+**Marketing measurement is scored against truth, including its blind spots.**
+`marketing/` implements MMM (geometric adstock + saturation, fit by
+coordinate descent with exact OLS conditioning, moving-block bootstrap
+intervals), three attribution models (last-touch, linear, Markov removal
+effect), censored-geometric subscription LTV, and a water-filling budget
+optimizer whose optimality is verified against brute force. The recovery
+gate demands MMM ROAS within 20% of truth on a DGP with go-dark windows,
+and — the honest headline — proves that *no* attribution model measures
+incrementality: all three over-credit the retargeting channel that harvests
+users already about to convert, with last-touch off by more than 3x.
+
+**Forecasts must beat "same day last week" or fail CI.** `forecasting/`
+implements Holt-Winters and a from-scratch gradient-boosted-stumps
+forecaster behind a rolling-origin backtest harness that owns the train/test
+boundary (a spy-model test proves nothing ever sees past its fold's origin).
+MASE is computed against seasonal-naive on identical folds; MASE >= 1 fails
+the build — models must earn their complexity. Quantile paths (P10/P50/P90)
+are scored with pinball loss, and bottom-up hierarchical forecasts are
+coherence-checked.
+
+**Risk models are deployment-gated on calibration, not just AUC.** `risk/`
+has a robust MAD-residual anomaly detector and a from-scratch isolation
+forest, both scored against injected shocks (precision and recall >= 0.8);
+a fraud model gated on ECE < 0.02 with reliability curves and Brier score;
+a cost-optimal threshold that must land on the analytic c_fp/(c_fp+c_fn)
+optimum; and a PSI drift monitor verified in both directions — silent on a
+fresh sample of the same population, alarming on a shifted regime.
+
+**growth-lab is an agent toolkit.** `integrations/` mirrors
+campaign-copilot's tool contract (`ToolSpec`, `ToolResult`, failures as
+results with machine-readable codes, `numeric_facts()` for grounding) and
+exposes the semantic layer, LTV, forecasting, and the MMM budget planner as
+mountable tools. The flagship demo answers "should we shift budget?" from
+fitted response curves, and the bridge gate verifies that every number a
+tool states in its content is licensed by its own data — so
+campaign-copilot's grounding checker passes these answers by construction.
+The audit is code too: `tests/test_readme_claims.py` fails CI if this
+README documents a CLI command that doesn't exist, marks a phase done
+without its packages, or quotes a causal-report table that no longer
+matches actual output.
+
+**Every reported number carries its lineage.** `reporting/` renders a
+weekly growth review (markdown + .pptx via one shared Figure layer) where
+each KPI embeds the exact semantic-layer SQL that produced it and each
+model output names its estimator. The memo template contains no digits; the
+provenance gate extracts every numeric token from the rendered memo and
+fails if any lacks a backing figure. `python -m growth_lab weekly-review`
+produces both files; `streamlit run dashboard/app.py` serves the
+interactive version (KPIs, channel views, MMM response curves with a budget
+slider, forecast + anomaly review, and a live experiment-readout
+calculator).
 
 **The experimentation platform's error rates are themselves under test.**
 `experiments/` provides power analysis, deterministic hash assignment with SRM
@@ -61,8 +133,20 @@ src/growth_lab/
   simulator/              params loader + vectorized event generation
   warehouse/              DuckDB landing, dbt orchestration, semantic layer
   experiments/            power, assignment/SRM, CUPED, sequential, readouts
+  causal/                 DiD, RDD, IPW, 2SLS, uplift — with assumption gates
+  marketing/              MMM, attribution, LTV, budget optimizer
+  forecasting/            Holt-Winters, boosted stumps, backtest, hierarchy
+  risk/                   anomaly detection, calibration, drift (PSI)
+  reporting/              Figure provenance, growth review (md + pptx)
+  integrations/           agent tool bridge (campaign-copilot contract)
+  service/                authenticated analytics API
+  churn/                  leakage safe churn feature and training pipeline
+  serve/                  authenticated churn prediction API
+  monitor/                drift, calibration, latency, and freshness checks
+dashboard/                Streamlit app (optional extra: pip install -e ".[dashboard]")
 dbt/                      staging views + star-schema marts
 tests/                    calibration gate, invariants, seal enforcement
+docs/                     operations and incident runbook
 ```
 
 Warehouse schemas: `raw` (as-landed) → `staging` (dbt views) → `marts`
@@ -73,177 +157,49 @@ never reads it.
 ## Quickstart
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,service,ml]"
 python -m growth_lab build          # simulate → DuckDB → dbt → metric summary
-pytest                              # calibration gate + invariants
+python -m growth_lab causal-report  # naive vs causal vs truth table
+python -m growth_lab weekly-review  # provenance-tracked memo (md + pptx)
+python -m growth_lab export-mmm     # MMM params artifact for the agent bridge
+pytest                              # all gates: calibration, recovery, provenance
 ruff check . && mypy               # style + strict types
 ```
 
-## Production ML — Churn Risk System
+## Production service
 
-The repository includes a production-grade churn prediction vertical slice:
-temporal feature engineering, MLflow-tracked training, a FastAPI prediction
-service, Docker packaging, monitoring, and a coverage-gated CI pipeline.
+Two production boundaries expose governed analytics and churn predictions through authenticated FastAPI services. The analytics API provides metrics, forecasting, and budget planning. Raw SQL is never accepted
+from clients. Metric filters are typed and bound as DuckDB parameters. The
+runtime also provides correlation IDs, structured JSON logs, health and
+readiness probes, bounded request bodies, security headers, and Prometheus
+text metrics.
 
-### Architecture
-
-```
-┌──────────────┐    ┌──────────────┐    ┌───────────────┐
-│  truth.yaml  │    │  DuckDB       │    │  dbt          │
-│  (sealed)    │───▶│  warehouse    │───▶│  star schema  │
-└──────────────┘    └──────┬───────┘    └───────┬───────┘
-                           │                    │
-                    ┌──────▼───────┐    ┌───────▼───────┐
-                    │  features.py │    │  train.py     │
-                    │  temporal    │───▶│  XGBoost +    │
-                    │  split, no   │    │  baselines    │
-                    │  leakage     │    └───────┬───────┘
-                    └──────────────┘            │
-                                        ┌───────▼───────┐
-                                        │  MLflow       │
-                                        │  tracking +   │
-                                        │  registry     │
-                                        └───────┬───────┘
-                                                │
-                                        ┌───────▼───────┐
-                                        │  models/      │
-                                        │  churn_model  │
-                                        │  .joblib      │
-                                        └───────┬───────┘
-                                                │
-┌──────────────┐    ┌──────────────┐    ┌───────▼───────┐
-│  Prometheus  │◀───│  FastAPI     │◀───│  Docker /     │
-│  /metrics    │    │  serve/app   │    │  Cloud Run    │
-└──────────────┘    └──────┬───────┘    └───────────────┘
-                           │
-                    ┌──────▼───────┐
-                    │  monitoring/ │
-                    │  drift       │
-                    │  calibration │
-                    │  health      │
-                    └──────────────┘
-```
-
-### Components
-
-| Module | Purpose | Key files |
-|--------|---------|-----------|
-| `churn/features.py` | Temporal feature engineering from warehouse (no truth.yaml access) | SQL + pandas pipeline, leakage-safe split |
-| `churn/train.py` | MLflow-tracked training: XGBoost vs Logistic Regression vs Random Forest vs Dummy | TimeSeriesSplit CV, calibration, model card |
-| `serve/app.py` | FastAPI prediction service with Prometheus metrics | `/predict`, `/predict/batch`, `/health`, `/metrics` |
-| `serve/schemas.py` | Pydantic request/response validation | `PredictionRequest`, `PredictionResponse`, `HealthResponse` |
-| `monitor/drift.py` | KS-statistic feature drift detection | Reference distribution comparison |
-| `monitor/calibration.py` | Expected Calibration Error (ECE) tracking | Binned probability calibration |
-| `monitor/health.py` | Latency (p50/p95/p99), throughput, data freshness | Warehouse timestamp checks |
-
-### Service Contract
-
-**`POST /predict`** — Single churn prediction
-
-```json
-// Request
-{
-  "user_id": 42,
-  "channel": "search",
-  "plan": "pro",
-  "tenure_days": 120,
-  "txn_count_obs": 4,
-  "total_spend_obs": 79.96,
-  "avg_txn_amount_obs": 19.99,
-  "days_since_last_txn": 15,
-  "txn_freq_monthly": 1.0,
-  "had_fraud_obs": 0,
-  "signup_dow": 2,
-  "signup_month": 3
-}
-
-// Response
-{
-  "user_id": 42,
-  "churn_probability": 0.0823,
-  "churn_prediction": false,
-  "model_version": "0.1.0",
-  "timestamp": "2025-07-01T12:00:00Z"
-}
-```
-
-**`POST /predict/batch`** — Up to 1,000 predictions in one request.
-
-**`GET /health`** — Liveness check with model version and uptime.
-**`GET /ready`** — Readiness probe (503 if model not loaded).
-**`GET /metrics`** — Prometheus scrape endpoint.
-**`GET /model`** — Model metadata (feature names, training date).
-
-### Deployment
-
-**Local (Docker Compose):**
-```bash
-docker-compose up --build       # serve (port 8000) + MLflow (port 5000)
-```
-
-**Cloud Run:**
-```bash
-gcloud builds submit --config=cloudbuild.yaml
-```
-
-**Manual:**
-```bash
-growth-lab-train                          # train + register model
-growth-lab-serve                          # start FastAPI (port 8000)
-```
-
-### Monitoring
-
-All monitoring is Prometheus-native, exposed at `/metrics`:
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `churn_predictions_total{outcome}` | Counter | Predictions by churn/retain |
-| `churn_prediction_latency_seconds` | Histogram | Per-request latency |
-| `churn_model_loaded` | Gauge | 1 if model loaded, 0 otherwise |
-| `churn_prediction_errors_total` | Counter | Prediction errors |
-| `churn_request_size` | Histogram | Batch request sizes |
-
-Additional scheduled checks via `monitor/`:
-- **Data drift**: KS-statistic per feature against training reference
-- **Calibration**: ECE on binned predictions (threshold ≤ 0.05)
-- **Data freshness**: Latest warehouse transaction timestamp
-
-### Retraining (Champion/Challenger)
+Create a secret with at least thirty two characters, then start the hardened
+container profile:
 
 ```bash
-# Full retraining pipeline
-python -m growth_lab build                        # refresh simulated data
-growth-lab-train                                  # train new model → MLflow
-python -c "
-from growth_lab.churn.train import train_pipeline
-results = train_pipeline(register_model=True)
-# Compare new vs. registered champion in MLflow UI (port 5000)
-"
+export GROWTH_LAB_API_KEY="$(openssl rand -hex 32)"
+docker compose up --build
+curl http://127.0.0.1:8000/readyz
+curl http://127.0.0.1:8001/ready
+curl -H "X-API-Key: $GROWTH_LAB_API_KEY" http://127.0.0.1:8000/metrics
+curl -H "X-API-Key: $GROWTH_LAB_API_KEY" http://127.0.0.1:8001/model
 ```
 
-If the new model beats the champion on test-set ROC-AUC, promote it via the
-MLflow registry or by copying `models/churn_model.joblib` into the serving
-volume.
+Both images run as an unprivileged user with a read only filesystem, all Linux
+capabilities removed, a process limit, and explicit CPU and memory limits. The
+churn image contains a versioned model built from the sealed warehouse with a
+temporal observation and prediction split. Prediction, model metadata, and
+metrics routes require the same API key as the analytics service.
+See [`docs/operations.md`](docs/operations.md) for configuration, deployment,
+monitoring, rollback, and incident procedures.
 
-### Measured Latency (reference)
+## Why this project exists
 
-| Percentile | Latency |
-|-----------|---------|
-| p50 | < 2 ms |
-| p95 | < 5 ms |
-| p99 | < 10 ms |
-
-*Measured on a single CPU (M1 Pro) with XGBoost, batch size 1, excluding network.*
-
-### CI Pipeline
-
-| Gate | Tool | Threshold |
-|------|------|-----------|
-| Lint | ruff | zero violations |
-| Types | mypy (strict) | zero errors |
-| Unit + Integration tests | pytest | 65% coverage minimum |
-| Seal enforcement | test_no_truth_leak.py | zero forbidden imports |
-| Docker build | docker | image builds |
-| Smoke test | curl /health | HTTP 200 |
-| Integration (main only) | simulate → train | end-to-end pipeline |
+NYC data science postings cluster into four families: product/
+experimentation, marketing/ads measurement, fintech forecasting & risk, and
+generalist ML. growth-lab covers all four in one coherent repo whose every
+claim is falsifiable against a sealed ground truth — and pairs with
+[campaign-copilot](https://github.com/KazmirFahrier/campaign-copilot) to make a single two-repo story:
+*building AI systems, and building the measurement science that keeps them
+honest.*

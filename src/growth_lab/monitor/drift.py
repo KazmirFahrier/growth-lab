@@ -1,9 +1,7 @@
 """Data and prediction drift monitoring.
 
 Compares current prediction request distributions against a stored reference
-(baseline) to detect feature drift, prediction drift, and data freshness issues.
-Uses evidently for statistical drift tests where available, falls back to
-simple KS-statistic-based checks otherwise.
+to detect feature and prediction drift with bounded empirical CDF checks.
 """
 
 from __future__ import annotations
@@ -12,7 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
+
+FloatArray = npt.NDArray[np.float64]
 
 
 @dataclass
@@ -36,15 +37,19 @@ class DriftMonitor:
     """Track data drift between a reference distribution and live predictions."""
 
     def __init__(self, drift_threshold: float = 0.1):
+        if not 0.0 < drift_threshold < 1.0:
+            raise ValueError("drift_threshold must be between zero and one")
         self._reference: pd.DataFrame | None = None
         self._threshold = drift_threshold
 
     def set_reference(self, df: pd.DataFrame) -> None:
         """Store the reference distribution (typically training data)."""
+        if df.empty:
+            raise ValueError("reference data must not be empty")
         self._reference = df.copy()
 
     def check(
-        self, current: pd.DataFrame, prediction_scores: np.ndarray | None = None
+        self, current: pd.DataFrame, prediction_scores: FloatArray | None = None
     ) -> DriftReport:
         """Compare current data against the reference baseline.
 

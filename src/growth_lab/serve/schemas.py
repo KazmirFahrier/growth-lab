@@ -1,83 +1,64 @@
-"""Pydantic request/response schemas for the churn prediction API."""
+"""Validated churn prediction service schemas."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PredictionRequest(BaseModel):
-    """Single user churn prediction request."""
+    """One bounded churn prediction request."""
 
-    user_id: int = Field(..., description="User identifier")
-    channel: str = Field(..., description="Acquisition channel")
-    plan: str = Field(..., description="Subscription plan (basic or pro)")
-    tenure_days: int = Field(..., ge=0, description="Days since signup")
-    txn_count_obs: int = Field(..., ge=0, description="Transaction count in obs window")
-    total_spend_obs: float = Field(..., ge=0.0, description="Total spend in obs window")
-    avg_txn_amount_obs: float = Field(..., ge=0.0, description="Avg transaction amount")
-    days_since_last_txn: int = Field(..., ge=0, description="Days since last transaction")
-    txn_freq_monthly: float = Field(..., ge=0.0, description="Transactions per month")
-    had_fraud_obs: int = Field(..., ge=0, le=1, description="Had fraudulent transaction")
-    signup_dow: int = Field(..., ge=0, le=6, description="Day of week (0=Mon..6=Sun)")
-    signup_month: int = Field(..., ge=1, le=12, description="Month of signup")
+    model_config = ConfigDict(extra="forbid")
 
-    model_config = {"json_schema_extra": {
-            "example": {
-                "user_id": 42,
-                "channel": "search",
-                "plan": "pro",
-                "tenure_days": 120,
-                "txn_count_obs": 4,
-                "total_spend_obs": 79.96,
-                "avg_txn_amount_obs": 19.99,
-                "days_since_last_txn": 15,
-                "txn_freq_monthly": 1.0,
-                "had_fraud_obs": 0,
-                "signup_dow": 2,
-                "signup_month": 3,
-            }
-        }}
+    user_id: int = Field(ge=0)
+    channel: Literal["display", "organic", "search", "social", "video"]
+    plan: Literal["basic", "pro"]
+    tenure_days: int = Field(ge=0, le=36_500)
+    txn_count_obs: int = Field(ge=0, le=1_000_000)
+    total_spend_obs: float = Field(ge=0.0, le=1_000_000_000, allow_inf_nan=False)
+    avg_txn_amount_obs: float = Field(ge=0.0, le=1_000_000_000, allow_inf_nan=False)
+    days_since_last_txn: int = Field(ge=0, le=36_500)
+    txn_freq_monthly: float = Field(ge=0.0, le=1_000_000, allow_inf_nan=False)
+    had_fraud_obs: Literal[0, 1]
+    signup_dow: int = Field(ge=0, le=6)
+    signup_month: int = Field(ge=1, le=12)
 
 
 class BatchPredictionRequest(BaseModel):
-    """Batch churn prediction request."""
+    """A bounded prediction batch."""
 
-    users: list[PredictionRequest] = Field(..., min_length=1, max_length=1000)
+    model_config = ConfigDict(extra="forbid")
+    users: list[PredictionRequest] = Field(min_length=1, max_length=1000)
 
 
 class PredictionResponse(BaseModel):
-    """Single prediction response."""
-
     user_id: int
-    churn_probability: float = Field(..., ge=0.0, le=1.0)
+    churn_probability: float = Field(ge=0.0, le=1.0)
     churn_prediction: bool
     model_version: str
     timestamp: datetime
 
 
 class BatchPredictionResponse(BaseModel):
-    """Batch prediction response."""
-
     predictions: list[PredictionResponse]
     model_version: str
 
 
 class HealthResponse(BaseModel):
-    """Service health check response."""
-
     status: str
     model_version: str
-    model_loaded_at: datetime
+    model_loaded_at: datetime | None
     uptime_seconds: float
 
 
 class ModelMetadataResponse(BaseModel):
-    """Model metadata response."""
-
     model_version: str
     feature_names: list[str]
     training_date: str
     n_users: int
     churn_rate: float
+    best_model: str
+    best_test_auc: float

@@ -21,6 +21,7 @@ from growth_lab.simulator import SimOutput
 
 # --- assignment -------------------------------------------------------------
 
+
 def test_assignment_deterministic() -> None:
     assert all(
         assign_arm("exp_pricing", uid) == assign_arm("exp_pricing", uid) for uid in range(200)
@@ -46,6 +47,7 @@ def test_assignment_rejects_single_arm() -> None:
 
 # --- SRM --------------------------------------------------------------------
 
+
 def test_srm_passes_when_balanced() -> None:
     assert srm_check(10_050, 9_950).passed
 
@@ -57,6 +59,7 @@ def test_srm_detects_imbalance() -> None:
 
 
 # --- guardrails -------------------------------------------------------------
+
 
 def test_guardrail_passes_when_clearly_non_inferior() -> None:
     spec = GuardrailSpec(metric="retention", margin=0.01)
@@ -148,6 +151,7 @@ def test_readout_markdown_renders() -> None:
 
 
 # --- end to end on simulated users -----------------------------------------
+
 
 def test_end_to_end_on_meridian_users(sim: SimOutput) -> None:
     """Assign real simulated users, inject a known lift, expect LAUNCH."""

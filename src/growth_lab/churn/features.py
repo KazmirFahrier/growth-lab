@@ -1,8 +1,7 @@
 """Temporal feature engineering for churn prediction.
 
-All features are derived exclusively from the warehouse (raw.* tables). The
-hidden truth (sim_hidden.users_latent) is never accessed — the no-truth seal
-is respected by construction.
+All features are derived exclusively from observable warehouse tables. The
+sealed simulator state is inaccessible by construction.
 
 Temporal split strategy:
   * Observation window: days [0, cutoff) from each user's signup
@@ -14,19 +13,23 @@ Temporal split strategy:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 # Default temporal split: 120 days observation, 30-day churn horizon.
 DEFAULT_CUTOFF_DAYS = 120
 DEFAULT_HORIZON_DAYS = 30
 
-# Where the canonical feature list is saved (training) / loaded (serving).
-FEATURE_NAMES_PATH = Path(__file__).resolve().parents[3] / "models" / "feature_names.json"
+# Where the canonical feature list is saved for the serving bundle.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MODEL_DIR = Path(os.environ.get("GROWTH_LAB_MODEL_DIR", str(REPO_ROOT / "models")))
+FEATURE_NAMES_PATH = MODEL_DIR / "feature_names.json"
 
 
 # ── ordered categorical levels (must match serving in serve/app.py) ──────
@@ -66,7 +69,7 @@ class TrainingSet:
     """Leakage-safe training data with temporal split metadata."""
 
     X: pd.DataFrame
-    y: np.ndarray
+    y: npt.NDArray[np.int64]
     feature_names: list[str]
     cutoff_days: int
     horizon_days: int
@@ -86,29 +89,30 @@ def build_training_set(
     signup + cutoff_days + horizon_days). Users with insufficient history
     are excluded. Rows are ordered by signup_date for temporal splitting.
     """
+    if cutoff_days <= 0 or horizon_days <= 0:
+        raise ValueError("cutoff_days and horizon_days must be positive")
+    if not db_path.is_file():
+        raise FileNotFoundError(f"warehouse does not exist: {db_path}")
+
     con = duckdb.connect(str(db_path), read_only=True)
 
     try:
         query = f"""
         WITH
-        user_base AS (
-          SELECT
-            s.user_id,
-            s.signup_date,
-            s.channel,
-            s.plan,
-            DATE_DIFF('day', s.signup_date, MAX(t.txn_date) OVER (PARTITION BY s.user_id))
-              AS max_txn_day
-          FROM raw.signups s
-          LEFT JOIN raw.transactions t ON s.user_id = t.user_id
-          WHERE s.subscribed = TRUE
-            AND s.plan IS NOT NULL
+        dataset_bounds AS (
+          SELECT GREATEST(
+            (SELECT MAX(date) FROM raw.ad_spend_daily),
+            (SELECT MAX(signup_date) FROM raw.signups),
+            (SELECT MAX(txn_date) FROM raw.transactions)
+          ) AS dataset_end
         ),
         eligible AS (
-          SELECT user_id, signup_date, channel, plan
-          FROM user_base
-          WHERE max_txn_day >= {cutoff_days} + {horizon_days}
-             OR max_txn_day IS NULL   -- keep users with no txns (they exist in signups)
+          SELECT s.user_id, s.signup_date, s.channel, s.plan
+          FROM raw.signups s
+          CROSS JOIN dataset_bounds b
+          WHERE s.subscribed = TRUE
+            AND s.plan IS NOT NULL
+            AND s.signup_date + INTERVAL '{cutoff_days + horizon_days} days' <= b.dataset_end
         ),
         txn_window AS (
           SELECT

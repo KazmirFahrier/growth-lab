@@ -11,14 +11,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import mlflow
 import mlflow.sklearn
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -32,17 +36,17 @@ from sklearn.metrics import (
 from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBClassifier
 
+from growth_lab import __version__
 from growth_lab.churn.features import build_training_set
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DB = REPO_ROOT / "data" / "growth_lab.duckdb"
-MLFLOW_TRACKING_URI = "file://" + str(REPO_ROOT / "mlruns")
-MODEL_DIR = REPO_ROOT / "models"
+DEFAULT_DB = Path(os.environ.get("GROWTH_LAB_DB", str(REPO_ROOT / "data/growth_lab.duckdb")))
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{REPO_ROOT / 'mlflow.db'}")
+MODEL_DIR = Path(os.environ.get("GROWTH_LAB_MODEL_DIR", str(REPO_ROOT / "models")))
+IntArray = npt.NDArray[np.int64]
 
 
-def _eval_model(
-    model, X_test: pd.DataFrame, y_test: np.ndarray, name: str
-) -> dict[str, float]:
+def _eval_model(model: Any, X_test: pd.DataFrame, y_test: IntArray, name: str) -> dict[str, float]:
     """Compute standard binary classification metrics."""
     y_prob = model.predict_proba(X_test)[:, 1]
     y_pred = model.predict(X_test)
@@ -50,14 +54,14 @@ def _eval_model(
     return {
         f"{name}_roc_auc": roc_auc_score(y_test, y_prob),
         f"{name}_avg_precision": average_precision_score(y_test, y_prob),
-        f"{name}_log_loss": log_loss(y_test, y_prob),
+        f"{name}_log_loss": log_loss(y_test, y_prob, labels=[0, 1]),
         f"{name}_brier": brier_score_loss(y_test, y_prob),
         f"{name}_accuracy": float((y_pred == y_test).mean()),
     }
 
 
 def _calibration_summary(
-    model, X_test: pd.DataFrame, y_test: np.ndarray, name: str, n_bins: int = 10
+    model: Any, X_test: pd.DataFrame, y_test: IntArray, name: str, n_bins: int = 10
 ) -> dict[str, object]:
     """Binned calibration curve — fraction of positives per predicted-probability bin."""
     y_prob = model.predict_proba(X_test)[:, 1]
@@ -69,7 +73,10 @@ def _calibration_summary(
     summary = summary.dropna()
     return {
         f"{name}_calibration_bins": summary.reset_index().to_dict(orient="records"),
-        f"{name}_ece": float((summary["mean_pred"] - summary["actual_rate"]).abs().mean()),
+        f"{name}_ece": float(
+            ((summary["mean_pred"] - summary["actual_rate"]).abs() * summary["count"]).sum()
+            / summary["count"].sum()
+        ),
     }
 
 
@@ -84,11 +91,15 @@ def train_pipeline(
     # ── 1. Build leakage-safe training set ───────────────────────────────
     ts = build_training_set(db_path, cutoff_days=cutoff_days, horizon_days=horizon_days)
     X, y = ts.X, ts.y
+    if len(X) < 100:
+        raise ValueError("at least 100 eligible users are required for training")
 
     # ── 2. Temporal train/test split (last 20% of users by signup date) ──
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
+    if len(np.unique(y_train)) != 2 or len(np.unique(y_test)) != 2:
+        raise ValueError("temporal train and test partitions must each contain both classes")
 
     # ── 3. Temporal CV for hyperparameter selection ──────────────────────
     tscv = TimeSeriesSplit(n_splits=3)
@@ -98,36 +109,43 @@ def train_pipeline(
         X_cv_val = X_train.iloc[val_idx]
         y_cv_train = y_train[train_idx]
         y_cv_val = y_train[val_idx]
+        if len(np.unique(y_cv_train)) != 2 or len(np.unique(y_cv_val)) != 2:
+            continue
         clf = XGBClassifier(
             n_estimators=100,
             max_depth=3,
             learning_rate=0.1,
             random_state=42,
             eval_metric="logloss",
+            n_jobs=1,
         )
         clf.fit(X_cv_train, y_cv_train)
         cv_scores.append(roc_auc_score(y_cv_val, clf.predict_proba(X_cv_val)[:, 1]))
+    if not cv_scores:
+        raise ValueError("temporal cross validation produced no two class fold")
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment("churn-prediction")
 
     with mlflow.start_run(run_name=f"churn-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}"):
         # ── log dataset metadata ─────────────────────────────────────────
-        mlflow.log_params({
-            "cutoff_days": cutoff_days,
-            "horizon_days": horizon_days,
-            "n_users": ts.n_users,
-            "churn_rate": ts.churn_rate,
-            "n_features": len(ts.feature_names),
-            "train_size": len(X_train),
-            "test_size": len(X_test),
-            "cv_mean_auc": float(np.mean(cv_scores)),
-            "cv_std_auc": float(np.std(cv_scores)),
-        })
+        mlflow.log_params(
+            {
+                "cutoff_days": cutoff_days,
+                "horizon_days": horizon_days,
+                "n_users": ts.n_users,
+                "churn_rate": ts.churn_rate,
+                "n_features": len(ts.feature_names),
+                "train_size": len(X_train),
+                "test_size": len(X_test),
+                "cv_mean_auc": float(np.mean(cv_scores)),
+                "cv_std_auc": float(np.std(cv_scores)),
+            }
+        )
         mlflow.log_dict(ts.feature_names, "feature_names.json")
 
         # ── 4. Train models ──────────────────────────────────────────────
-        models: dict[str, object] = {}
+        models: dict[str, Any] = {}
 
         # Dummy baseline
         dummy = DummyClassifier(strategy="stratified", random_state=42)
@@ -140,7 +158,12 @@ def train_pipeline(
         models["logistic"] = lr
 
         # Random Forest
-        rf = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+        rf = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=5,
+            random_state=42,
+            n_jobs=1,
+        )
         rf.fit(X_train, y_train)
         models["random_forest"] = rf
 
@@ -151,13 +174,14 @@ def train_pipeline(
             learning_rate=0.1,
             random_state=42,
             eval_metric="logloss",
+            n_jobs=1,
         )
         xgb.fit(X_train, y_train)
         models["xgboost"] = xgb
 
         # ── 5. Evaluate all models ───────────────────────────────────────
         results: dict[str, object] = {}
-        best_auc = 0.0
+        best_auc = float("-inf")
         best_name = ""
 
         for name, model in models.items():
@@ -173,18 +197,24 @@ def train_pipeline(
                 best_name = name
 
         # ── 6. Feature importance (XGBoost) ──────────────────────────────
-        importance = pd.DataFrame({
-            "feature": ts.feature_names,
-            "importance": xgb.feature_importances_,
-        }).sort_values("importance", ascending=False)
+        importance = pd.DataFrame(
+            {
+                "feature": ts.feature_names,
+                "importance": xgb.feature_importances_,
+            }
+        ).sort_values("importance", ascending=False)
         mlflow.log_dict(importance.to_dict(orient="records"), "feature_importance.json")
 
         # ── 7. Log and register best model ────────────────────────────────
         best_model = models[best_name]
         if register_model:
-            mlflow.sklearn.log_model(best_model, "model", registered_model_name="churn-predictor")
+            mlflow.sklearn.log_model(
+                best_model,
+                name="model",
+                registered_model_name="churn-predictor",
+            )
         else:
-            mlflow.sklearn.log_model(best_model, "model")
+            mlflow.sklearn.log_model(best_model, name="model")
 
         # Save model artifact for serving
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -198,21 +228,24 @@ def train_pipeline(
             # Also save a versioned copy in models/
             dest = MODEL_DIR / "churn_model.joblib"
             joblib.dump(best_model, dest)
+        model_sha256 = hashlib.sha256(dest.read_bytes()).hexdigest()
 
         # ── 8. Model card ─────────────────────────────────────────────────
         model_card = {
+            "model_version": __version__,
             "training_date": datetime.now(timezone.utc).isoformat(),
             "best_model": best_name,
             "best_test_auc": best_auc,
+            "model_sha256": model_sha256,
             "n_users": ts.n_users,
             "churn_rate": ts.churn_rate,
             "feature_names": ts.feature_names,
-            "metrics": results,
+            "metrics": dict(results),
         }
         mlflow.log_dict(model_card, "model_card.json")
+        (MODEL_DIR / "model_card.json").write_text(json.dumps(model_card, indent=2, default=str))
         results["model_card"] = model_card
 
-    mlflow.end_run()
     return results
 
 

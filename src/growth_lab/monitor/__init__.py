@@ -1,7 +1,7 @@
 """Production ML monitoring: drift, calibration, health, and data freshness.
 
-All monitors observe the running prediction service and the warehouse data;
-none read the sealed ground truth (truth.yaml or sim_hidden).
+All monitors observe the running prediction service and observable warehouse
+data. They cannot read sealed simulator state.
 """
 
 from growth_lab.monitor.calibration import CalibrationMonitor, calibration_report

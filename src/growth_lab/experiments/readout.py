@@ -84,8 +84,10 @@ def evaluate(design: ExperimentDesign, control: ArmCounts, treatment: ArmCounts)
         )
 
     primary = two_proportion_ztest(
-        control.primary_conversions, control.n,
-        treatment.primary_conversions, treatment.n,
+        control.primary_conversions,
+        control.n,
+        treatment.primary_conversions,
+        treatment.n,
         alpha=design.alpha,
     )
 
@@ -97,8 +99,10 @@ def evaluate(design: ExperimentDesign, control: ArmCounts, treatment: ArmCounts)
         guardrail_results.append(
             non_inferiority_test(
                 spec,
-                control.guardrail_conversions[spec.metric], control.n,
-                treatment.guardrail_conversions[spec.metric], treatment.n,
+                control.guardrail_conversions[spec.metric],
+                control.n,
+                treatment.guardrail_conversions[spec.metric],
+                treatment.n,
             )
         )
     guardrails = tuple(guardrail_results)
