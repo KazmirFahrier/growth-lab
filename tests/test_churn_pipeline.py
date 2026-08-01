@@ -77,7 +77,7 @@ class TestFeatureEngineering:
 
 class TestTrainingPipeline:
     def test_train_pipeline_runs(self, db_path: Path) -> None:
-        results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
+        _results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
         card = results.get("model_card", {})
         assert "best_model" in card
         assert card.get("best_test_auc", 0) > 0
@@ -181,11 +181,12 @@ class TestEndToEndServing:
 
     def test_train_then_predict(self, db_path: Path, tmp_path: Path) -> None:
         import joblib
+
         from growth_lab.churn.train import train_pipeline
         from growth_lab.serve.app import _build_feature_vector
 
         # 1. Train a model and save it
-        results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
+        _results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
         model_path = tmp_path / "churn_model.joblib"
         model_src = Path(__file__).resolve().parents[1] / "models" / "churn_model.joblib"
         assert model_src.exists(), "Training should produce models/churn_model.joblib"

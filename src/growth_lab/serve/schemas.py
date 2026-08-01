@@ -11,20 +11,19 @@ class PredictionRequest(BaseModel):
     """Single user churn prediction request."""
 
     user_id: int = Field(..., description="User identifier")
-    channel: str = Field(..., description="Acquisition channel (search, social, display, video, organic)")
+    channel: str = Field(..., description="Acquisition channel")
     plan: str = Field(..., description="Subscription plan (basic or pro)")
     tenure_days: int = Field(..., ge=0, description="Days since signup")
-    txn_count_obs: int = Field(..., ge=0, description="Transaction count in observation window")
-    total_spend_obs: float = Field(..., ge=0.0, description="Total spend in observation window")
-    avg_txn_amount_obs: float = Field(..., ge=0.0, description="Average transaction amount")
+    txn_count_obs: int = Field(..., ge=0, description="Transaction count in obs window")
+    total_spend_obs: float = Field(..., ge=0.0, description="Total spend in obs window")
+    avg_txn_amount_obs: float = Field(..., ge=0.0, description="Avg transaction amount")
     days_since_last_txn: int = Field(..., ge=0, description="Days since last transaction")
     txn_freq_monthly: float = Field(..., ge=0.0, description="Transactions per month")
-    had_fraud_obs: int = Field(..., ge=0, le=1, description="Whether user had a fraudulent transaction")
-    signup_dow: int = Field(..., ge=0, le=6, description="Day of week of signup (0=Mon..6=Sun)")
+    had_fraud_obs: int = Field(..., ge=0, le=1, description="Had fraudulent transaction")
+    signup_dow: int = Field(..., ge=0, le=6, description="Day of week (0=Mon..6=Sun)")
     signup_month: int = Field(..., ge=1, le=12, description="Month of signup")
 
-    class Config:
-        json_schema_extra = {
+    model_config = {"json_schema_extra": {
             "example": {
                 "user_id": 42,
                 "channel": "search",
@@ -39,7 +38,7 @@ class PredictionRequest(BaseModel):
                 "signup_dow": 2,
                 "signup_month": 3,
             }
-        }
+        }}
 
 
 class BatchPredictionRequest(BaseModel):
