@@ -11,14 +11,16 @@ import tempfile
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import pytest
 
+import growth_lab.churn.train as churn_train
 from growth_lab.churn.features import build_training_set
-from growth_lab.churn.train import train_pipeline
 from growth_lab.serve.app import _build_feature_vector
 from growth_lab.serve.schemas import PredictionRequest
 from growth_lab.simulator.generate import simulate
@@ -80,12 +82,59 @@ class TestFeatureEngineering:
 
 
 class TestTrainingPipeline:
-    def test_train_pipeline_runs(self, db_path: Path) -> None:
-        _results = train_pipeline(db_path, cutoff_days=60, horizon_days=30, register_model=False)
+    def test_train_pipeline_runs(self, db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        evaluation_calls: list[str] = []
+        original_eval = churn_train._eval_model
+
+        def record_eval(
+            model: Any,
+            X_test: pd.DataFrame,
+            y_test: npt.NDArray[np.int64],
+            name: str,
+        ) -> dict[str, float]:
+            evaluation_calls.append(name)
+            return original_eval(model, X_test, y_test, name)
+
+        monkeypatch.setattr(churn_train, "_eval_model", record_eval)
+        _results = churn_train.train_pipeline(
+            db_path,
+            cutoff_days=60,
+            horizon_days=30,
+            register_model=False,
+        )
         card = _results.get("model_card", {})
         assert isinstance(card, dict)
-        assert "best_model" in card
+        selected_model = card.get("best_model")
+        assert evaluation_calls == [selected_model]
         assert card.get("best_test_auc", 0) > 0
+        assert card.get("selection_method") == "temporal_cross_validation"
+        assert card.get("selection_metric") == "roc_auc"
+        assert card.get("selection_folds", 0) >= 2
+        assert set(card.get("candidate_cv_auc", {})) == {
+            "dummy",
+            "logistic",
+            "random_forest",
+            "xgboost",
+        }
+        candidate_scores = card.get("candidate_cv_auc", {})
+        assert selected_model == max(
+            candidate_scores,
+            key=lambda name: candidate_scores[name]["mean"],
+        )
+        assert all(
+            len(summary["fold_scores"]) == card["selection_folds"]
+            for summary in candidate_scores.values()
+        )
+        assert card.get("final_test_auc") == card.get("best_test_auc")
+        assert set(card.get("test_metrics", {})) == {
+            f"{selected_model}_roc_auc",
+            f"{selected_model}_avg_precision",
+            f"{selected_model}_log_loss",
+            f"{selected_model}_brier",
+            f"{selected_model}_accuracy",
+            f"{selected_model}_calibration_bins",
+            f"{selected_model}_ece",
+        }
         json.dumps(card, default=str)
 
 
