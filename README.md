@@ -78,3 +78,172 @@ python -m growth_lab build          # simulate → DuckDB → dbt → metric sum
 pytest                              # calibration gate + invariants
 ruff check . && mypy               # style + strict types
 ```
+
+## Production ML — Churn Risk System
+
+The repository includes a production-grade churn prediction vertical slice:
+temporal feature engineering, MLflow-tracked training, a FastAPI prediction
+service, Docker packaging, monitoring, and a coverage-gated CI pipeline.
+
+### Architecture
+
+```
+┌──────────────┐    ┌──────────────┐    ┌───────────────┐
+│  truth.yaml  │    │  DuckDB       │    │  dbt          │
+│  (sealed)    │───▶│  warehouse    │───▶│  star schema  │
+└──────────────┘    └──────┬───────┘    └───────┬───────┘
+                           │                    │
+                    ┌──────▼───────┐    ┌───────▼───────┐
+                    │  features.py │    │  train.py     │
+                    │  temporal    │───▶│  XGBoost +    │
+                    │  split, no   │    │  baselines    │
+                    │  leakage     │    └───────┬───────┘
+                    └──────────────┘            │
+                                        ┌───────▼───────┐
+                                        │  MLflow       │
+                                        │  tracking +   │
+                                        │  registry     │
+                                        └───────┬───────┘
+                                                │
+                                        ┌───────▼───────┐
+                                        │  models/      │
+                                        │  churn_model  │
+                                        │  .joblib      │
+                                        └───────┬───────┘
+                                                │
+┌──────────────┐    ┌──────────────┐    ┌───────▼───────┐
+│  Prometheus  │◀───│  FastAPI     │◀───│  Docker /     │
+│  /metrics    │    │  serve/app   │    │  Cloud Run    │
+└──────────────┘    └──────┬───────┘    └───────────────┘
+                           │
+                    ┌──────▼───────┐
+                    │  monitoring/ │
+                    │  drift       │
+                    │  calibration │
+                    │  health      │
+                    └──────────────┘
+```
+
+### Components
+
+| Module | Purpose | Key files |
+|--------|---------|-----------|
+| `churn/features.py` | Temporal feature engineering from warehouse (no truth.yaml access) | SQL + pandas pipeline, leakage-safe split |
+| `churn/train.py` | MLflow-tracked training: XGBoost vs Logistic Regression vs Random Forest vs Dummy | TimeSeriesSplit CV, calibration, model card |
+| `serve/app.py` | FastAPI prediction service with Prometheus metrics | `/predict`, `/predict/batch`, `/health`, `/metrics` |
+| `serve/schemas.py` | Pydantic request/response validation | `PredictionRequest`, `PredictionResponse`, `HealthResponse` |
+| `monitor/drift.py` | KS-statistic feature drift detection | Reference distribution comparison |
+| `monitor/calibration.py` | Expected Calibration Error (ECE) tracking | Binned probability calibration |
+| `monitor/health.py` | Latency (p50/p95/p99), throughput, data freshness | Warehouse timestamp checks |
+
+### Service Contract
+
+**`POST /predict`** — Single churn prediction
+
+```json
+// Request
+{
+  "user_id": 42,
+  "channel": "search",
+  "plan": "pro",
+  "tenure_days": 120,
+  "txn_count_obs": 4,
+  "total_spend_obs": 79.96,
+  "avg_txn_amount_obs": 19.99,
+  "days_since_last_txn": 15,
+  "txn_freq_monthly": 1.0,
+  "had_fraud_obs": 0,
+  "signup_dow": 2,
+  "signup_month": 3
+}
+
+// Response
+{
+  "user_id": 42,
+  "churn_probability": 0.0823,
+  "churn_prediction": false,
+  "model_version": "0.1.0",
+  "timestamp": "2025-07-01T12:00:00Z"
+}
+```
+
+**`POST /predict/batch`** — Up to 1,000 predictions in one request.
+
+**`GET /health`** — Liveness check with model version and uptime.
+**`GET /ready`** — Readiness probe (503 if model not loaded).
+**`GET /metrics`** — Prometheus scrape endpoint.
+**`GET /model`** — Model metadata (feature names, training date).
+
+### Deployment
+
+**Local (Docker Compose):**
+```bash
+docker-compose up --build       # serve (port 8000) + MLflow (port 5000)
+```
+
+**Cloud Run:**
+```bash
+gcloud builds submit --config=cloudbuild.yaml
+```
+
+**Manual:**
+```bash
+growth-lab-train                          # train + register model
+growth-lab-serve                          # start FastAPI (port 8000)
+```
+
+### Monitoring
+
+All monitoring is Prometheus-native, exposed at `/metrics`:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `churn_predictions_total{outcome}` | Counter | Predictions by churn/retain |
+| `churn_prediction_latency_seconds` | Histogram | Per-request latency |
+| `churn_model_loaded` | Gauge | 1 if model loaded, 0 otherwise |
+| `churn_prediction_errors_total` | Counter | Prediction errors |
+| `churn_request_size` | Histogram | Batch request sizes |
+
+Additional scheduled checks via `monitor/`:
+- **Data drift**: KS-statistic per feature against training reference
+- **Calibration**: ECE on binned predictions (threshold ≤ 0.05)
+- **Data freshness**: Latest warehouse transaction timestamp
+
+### Retraining (Champion/Challenger)
+
+```bash
+# Full retraining pipeline
+python -m growth_lab build                        # refresh simulated data
+growth-lab-train                                  # train new model → MLflow
+python -c "
+from growth_lab.churn.train import train_pipeline
+results = train_pipeline(register_model=True)
+# Compare new vs. registered champion in MLflow UI (port 5000)
+"
+```
+
+If the new model beats the champion on test-set ROC-AUC, promote it via the
+MLflow registry or by copying `models/churn_model.joblib` into the serving
+volume.
+
+### Measured Latency (reference)
+
+| Percentile | Latency |
+|-----------|---------|
+| p50 | < 2 ms |
+| p95 | < 5 ms |
+| p99 | < 10 ms |
+
+*Measured on a single CPU (M1 Pro) with XGBoost, batch size 1, excluding network.*
+
+### CI Pipeline
+
+| Gate | Tool | Threshold |
+|------|------|-----------|
+| Lint | ruff | zero violations |
+| Types | mypy (strict) | zero errors |
+| Unit + Integration tests | pytest | 65% coverage minimum |
+| Seal enforcement | test_no_truth_leak.py | zero forbidden imports |
+| Docker build | docker | image builds |
+| Smoke test | curl /health | HTTP 200 |
+| Integration (main only) | simulate → train | end-to-end pipeline |
