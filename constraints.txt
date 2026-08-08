@@ -14,7 +14,7 @@ pytest==9.1.1
 pytest-cov==7.1.0
 python-pptx==1.0.2
 PyYAML==6.0.3
-ruff==0.15.22
+ruff==0.16.1
 scikit-learn==1.9.0
 types-PyYAML==6.0.12.20260518
 uvicorn==0.51.0
