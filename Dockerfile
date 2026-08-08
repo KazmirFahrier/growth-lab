@@ -1,4 +1,4 @@
-FROM python:3.12.11-slim AS builder
+FROM python:3.14.0-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -31,7 +31,7 @@ RUN growth-lab-train \
     --horizon-days 30 \
     --no-register
 
-FROM python:3.12.11-slim AS runtime-base
+FROM python:3.14.0-slim AS runtime-base
 
 ENV PATH="/opt/growth-lab/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
