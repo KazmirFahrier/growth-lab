@@ -1,0 +1,9 @@
+.gcloudignore
+.git
+.gitignore
+#!include:.gitignore
+
+# The root models directory contains generated serving artifacts.
+# dbt models are tracked build inputs and must always be uploaded.
+!dbt/models/
+!dbt/models/**
