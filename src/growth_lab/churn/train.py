@@ -82,6 +82,17 @@ def _calibration_summary(
     }
 
 
+# Types that skops does not trust by default but that the candidate models
+# below serialize. The model is written by this run and reloaded only to
+# verify the artifact, so trusting exactly these types is safe. Extend the
+# list when a new estimator family joins `_candidate_models`.
+SKOPS_TRUSTED_TYPES = [
+    "sklearn.tree._tree.Tree",
+    "xgboost.core.Booster",
+    "xgboost.sklearn.XGBClassifier",
+]
+
+
 def _candidate_models() -> dict[str, Any]:
     """Create fresh candidate estimators for one fit cycle."""
     return {
@@ -225,9 +236,14 @@ def train_pipeline(
                 selected_model,
                 name="model",
                 registered_model_name="churn-predictor",
+                skops_trusted_types=SKOPS_TRUSTED_TYPES,
             )
         else:
-            mlflow.sklearn.log_model(selected_model, name="model")
+            mlflow.sklearn.log_model(
+                selected_model,
+                name="model",
+                skops_trusted_types=SKOPS_TRUSTED_TYPES,
+            )
 
         # Save model artifact for serving
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
